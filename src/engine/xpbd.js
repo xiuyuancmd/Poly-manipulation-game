@@ -31,12 +31,14 @@ export class ParticleSystem {
   isPinned(i) { return this.invMass[i] === 0 && this.baseInvMass[i] !== 0; }
 }
 
-/** Distance constraint between two particles. */
+/** Distance constraint between two particles. `unilateral` = rope: resists
+ *  stretching only, so tethered parts can move closer but not further apart. */
 export class DistanceConstraint {
-  constructor(i, j, rest, compliance = 0) {
+  constructor(i, j, rest, compliance = 0, unilateral = false) {
     this.i = i; this.j = j;
     this.rest = rest;
     this.compliance = compliance;
+    this.unilateral = unilateral;
     this.broken = false;
   }
 
@@ -49,6 +51,7 @@ export class DistanceConstraint {
     const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
     if (len < 1e-9) return;
     const C = len - this.rest;
+    if (this.unilateral && C < 0) return;
     const alphaT = this.compliance / (h * h);
     const dl = -C / (w + alphaT);
     dx /= len; dy /= len; dz /= len;

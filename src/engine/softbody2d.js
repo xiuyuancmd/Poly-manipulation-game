@@ -157,10 +157,15 @@ export class SoftBody2D {
       deflated: false,
       alive: true,
     };
+    // A pressurized loop must be ABLE to hold its inflated area: by the
+    // isoperimetric inequality the chain rest lengths must grow by sqrt(inflate),
+    // otherwise the area and distance constraints fight forever and pump energy.
+    let restFactor = style.restFactor;
+    if (pipe.closed && pipe.type === 'pressure') restFactor *= Math.sqrt(style.inflate ?? 1.5);
     const segN = pipe.closed ? count : count - 1;
     for (let k = 0; k < segN; k++) {
       const a = parts[k], b = parts[(k + 1) % count];
-      const rest = Math.hypot(ps.x[b] - ps.x[a], ps.y[b] - ps.y[a]) * style.restFactor;
+      const rest = Math.hypot(ps.x[b] - ps.x[a], ps.y[b] - ps.y[a]) * restFactor;
       pipe.segCs.push({ a, b, c: solver.add(new DistanceConstraint(a, b, rest, style.compliance)) });
     }
     if (pipe.closed && pipe.type === 'pressure') {
@@ -178,7 +183,9 @@ export class SoftBody2D {
         .sort((u, v) => u.d - v.d)
         .slice(0, 2);
       for (const e of near) {
-        pipe.coupleCs.push({ a: p, b: e.r, c: solver.add(new DistanceConstraint(p, e.r, e.d, this.coupleCompliance)) });
+        // Rope-like tether: lets the pipe drift closer to the wall (e.g. when a
+        // pressure loop inflates) without pushing it around, but resists stretch.
+        pipe.coupleCs.push({ a: p, b: e.r, c: solver.add(new DistanceConstraint(p, e.r, e.d, this.coupleCompliance, true)) });
       }
     }
     this.pipes.push(pipe);
@@ -187,21 +194,37 @@ export class SoftBody2D {
 
   // ---- pressure coupling ---------------------------------------------------
 
+  /** Pressure factor of an island: base + contributions of live pressure pipes inside it. */
+  computeFactor(island) {
+    let factor = this.basePressure;
+    const pts = this.ringPoints(island);
+    for (const pipe of this.pipes) {
+      if (!pipe.alive || pipe.type !== 'pressure' || pipe.deflated) continue;
+      const mid = pipe.parts[Math.floor(pipe.parts.length / 2)];
+      if (pointInPolygon(pts, this.ps.x[mid], this.ps.y[mid])) {
+        factor += pipe.props.bodyInflation ?? 0.5;
+      }
+    }
+    return factor;
+  }
+
   /** Body area target = rest area x (base pressure + live pressure-pipe contributions). */
   recomputePressure() {
-    const alive = this.islands.filter(i => i.alive);
-    for (const island of alive) {
-      let factor = this.basePressure;
-      const pts = this.ringPoints(island);
-      for (const pipe of this.pipes) {
-        if (!pipe.alive || pipe.type !== 'pressure' || pipe.deflated) continue;
-        const mid = pipe.parts[Math.floor(pipe.parts.length / 2)];
-        if (pointInPolygon(pts, this.ps.x[mid], this.ps.y[mid])) {
-          factor += pipe.props.bodyInflation ?? 0.5;
-        }
-      }
-      island.areaC.targetArea = island.baseRestArea * factor;
+    for (const island of this.islands) {
+      if (!island.alive) continue;
+      island.areaC.targetArea = island.baseRestArea * this.computeFactor(island);
     }
+  }
+
+  /** Remove an island's constraints but KEEP its particles (they get re-used by
+   *  the replacement rings during cut surgery). */
+  retireIsland(island) {
+    island.alive = false;
+    for (const e of island.edgeCs) this.solver.remove(e.c);
+    for (const e of island.bendCs) this.solver.remove(e.c);
+    if (island.areaC) this.solver.remove(island.areaC);
+    const idx = this.islands.indexOf(island);
+    if (idx >= 0) this.islands.splice(idx, 1);
   }
 
   // ---- pipe surgery (shared by cutting and brittle failure) ----------------
@@ -346,11 +369,33 @@ export class SoftBody2D {
   }
 
   settle(steps = 90, dt = 1 / 60) {
+    const { ps } = this;
+    const com = () => {
+      let x = 0, y = 0, n = 0;
+      for (const i of this.owned) {
+        if (!ps.alive[i]) continue;
+        x += ps.x[i]; y += ps.y[i]; n++;
+      }
+      return { x: x / n, y: y / n };
+    };
+    const before = com();
+    // Heavy damping while the initial constraint transient (pressure targets,
+    // muscle contraction) plays out, so it cannot fold pipes or throw the body.
+    const prevDamping = this.solver.damping;
+    this.solver.damping = 0.6;
     for (let s = 0; s < steps; s++) {
       this.solver.step(dt);
       this.update();
     }
-    // Kill any residual drift so the level starts perfectly still.
-    for (const i of this.owned) { this.ps.vx[i] = 0; this.ps.vy[i] = 0; }
+    this.solver.damping = prevDamping;
+    // Sequential (Gauss-Seidel) solves don't conserve momentum under violent
+    // transients: put the centre of mass back where the level author placed it.
+    const after = com();
+    const dx = before.x - after.x, dy = before.y - after.y;
+    for (const i of this.owned) {
+      if (!ps.alive[i]) continue;
+      ps.x[i] += dx; ps.y[i] += dy;
+      ps.vx[i] = 0; ps.vy[i] = 0;
+    }
   }
 }

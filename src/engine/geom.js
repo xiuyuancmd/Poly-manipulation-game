@@ -70,6 +70,15 @@ export function dist(ax, ay, bx, by) {
   return Math.hypot(bx - ax, by - ay);
 }
 
+/** Distance from point (px,py) to segment AB. */
+export function distPointToSeg(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay;
+  const L2 = dx * dx + dy * dy;
+  let t = L2 < 1e-12 ? 0 : ((px - ax) * dx + (py - ay) * dy) / L2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - (ax + dx * t), py - (ay + dy * t));
+}
+
 export function polylineLength(pts, closed) {
   let len = 0;
   const n = pts.length;

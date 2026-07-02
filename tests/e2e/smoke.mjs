@@ -97,6 +97,33 @@ await page.waitForTimeout(600);
 const islands = await page.evaluate(() => window.__game.session.body?.aliveIslands().length ?? -1);
 if (islands !== 2) fail(`expected 2 islands after full cut, got ${islands}`);
 console.log('cut ok: 2 islands');
+
+// 4. Win flow: banner -> next target -> victory overlay.
+await page.evaluate(() => window.__game.startLevel(0));
+await page.waitForTimeout(400);
+await page.evaluate(() => window.__game.completeTarget());
+await page.waitForTimeout(1800);
+const idxAfterBanner = await page.evaluate(() => window.__game.targetIdx);
+if (idxAfterBanner !== 1) fail(`banner should advance to target 2, got index ${idxAfterBanner}`);
+await page.evaluate(() => window.__game.completeTarget());
+await page.waitForTimeout(1800);
+const wonState = await page.evaluate(() => window.__game.state);
+const resultVisible = await page.evaluate(() => !document.querySelector('#result').classList.contains('hidden'));
+if (wonState !== 'won' || !resultVisible) fail(`win flow: state=${wonState} overlay=${resultVisible}`);
+console.log('win flow ok');
+
+// 5. Lose flow: timer runs out -> defeat overlay -> retry resets.
+await page.evaluate(() => window.__game.startLevel(1));
+await page.waitForTimeout(400);
+await page.evaluate(() => { window.__game.timeLeft = 0.05; });
+await page.waitForTimeout(500);
+const lostState = await page.evaluate(() => window.__game.state);
+if (lostState !== 'lost') fail(`lose flow: state=${lostState}`);
+await page.click('#btn-retry');
+await page.waitForTimeout(400);
+const retryState = await page.evaluate(() => window.__game.state);
+if (retryState !== 'playing') fail(`retry: state=${retryState}`);
+console.log('lose/retry flow ok');
 if (errors.length) fail(`console errors: ${errors.join(' | ')}`);
 
 await browser.close();

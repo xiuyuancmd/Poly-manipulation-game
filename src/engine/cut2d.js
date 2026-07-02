@@ -23,14 +23,33 @@ export function performCut(body, ax, ay, bx, by) {
     return;
   }
 
-  // Ring crossings, sorted along the knife.
-  const hits = [];
-  for (const island of body.aliveIslands()) {
-    const ring = island.ring, m = ring.length;
-    for (let k = 0; k < m; k++) {
-      const A = ring[k], B = ring[(k + 1) % m];
-      const hit = segSegIntersect(ax, ay, bx, by, ps.x[A], ps.y[A], ps.x[B], ps.y[B]);
-      if (hit) hits.push({ island, edge: k, ...hit });
+  const gatherHits = (x0, y0, x1, y1) => {
+    const out = [];
+    for (const island of body.aliveIslands()) {
+      const ring = island.ring, m = ring.length;
+      for (let k = 0; k < m; k++) {
+        const A = ring[k], B = ring[(k + 1) % m];
+        const hit = segSegIntersect(x0, y0, x1, y1, ps.x[A], ps.y[A], ps.x[B], ps.y[B]);
+        if (hit) out.push({ island, edge: k, ...hit });
+      }
+    }
+    return out;
+  };
+
+  // A knife passing exactly through a boundary VERTEX hits both adjacent edges
+  // at u~0/u~1 and the ring surgery degenerates. Nudge the blade sideways by an
+  // imperceptible amount until every crossing is cleanly mid-edge.
+  const dlen = Math.hypot(bx - ax, by - ay) || 1;
+  const nx = -(by - ay) / dlen, ny = (bx - ax) / dlen;
+  let hits = [];
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const off = attempt * 1.0;
+    const x0 = ax + nx * off, y0 = ay + ny * off;
+    const x1 = bx + nx * off, y1 = by + ny * off;
+    hits = gatherHits(x0, y0, x1, y1);
+    if (hits.every(h => h.u > 0.04 && h.u < 0.96)) {
+      ax = x0; ay = y0; bx = x1; by = y1;
+      break;
     }
   }
 

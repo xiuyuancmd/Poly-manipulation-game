@@ -18,13 +18,7 @@ export class Session2D {
     this.def = def;
     this.ps = new ParticleSystem();
     this.solver = new Solver(this.ps);
-    this.body = SoftBody2D.build(this.ps, this.solver, {
-      outline: def.body.outline,
-      edgeLen: def.body.edgeLen ?? 16,
-      basePressure: def.body.basePressure ?? 1.0,
-      lattice: def.body.lattice,
-      pipes: def.pipes ?? [],
-    });
+    this.body = SoftBody2D.build(this.ps, this.solver, { ...def.body, pipes: def.pipes ?? [] });
     this.body.settle(150);
     this.body.drainEvents();
 
@@ -74,7 +68,12 @@ export class Session2D {
     }
     // Drop controls whose particles died in a cut.
     for (const [id, g] of [...this.grabs]) {
-      if (!this.ps.alive[g.particle]) { this.solver.remove(g.anchor); this.grabs.delete(id); }
+      g.anchors = g.anchors.filter(a => {
+        if (this.ps.alive[a.c.i]) return true;
+        this.solver.remove(a.c);
+        return false;
+      });
+      if (g.anchors.length === 0) this.grabs.delete(id);
     }
     for (const i of [...this.pins]) if (!this.ps.alive[i]) this.pins.delete(i);
   }
@@ -108,7 +107,10 @@ export class Session2D {
 
   pointerMove(tool, x, y, id) {
     const g = this.grabs.get(id);
-    if (g) g.anchor.setTarget(x, y);
+    if (g) {
+      g.x = x; g.y = y;
+      for (const a of g.anchors) a.c.setTarget(x + a.ox, y + a.oy);
+    }
     if (tool === 'cut' && this.cutDrag) { this.cutDrag.x1 = x; this.cutDrag.y1 = y; }
     if (tool === 'glue' && this.glueSel) this.gluePos = { x, y };
   }
@@ -116,7 +118,7 @@ export class Session2D {
   pointerUp(tool, x, y, id) {
     const g = this.grabs.get(id);
     if (g) {
-      this.solver.remove(g.anchor);
+      for (const a of g.anchors) this.solver.remove(a.c);
       this.grabs.delete(id);
     }
     if (tool === 'cut' && this.cutDrag) {
@@ -145,8 +147,22 @@ export class Session2D {
     }
     const p = this.body.nearestParticle(x, y, GRAB_RADIUS);
     if (p < 0) return false;
-    const anchor = this.solver.add(new AnchorConstraint(p, x, y, 0, GRAB_COMPLIANCE));
-    this.grabs.set(id, { anchor, particle: p });
+    // Soft-hand grip: everything within GRIP_SPREAD moves as one rigid handle,
+    // so dragging pulls a patch of material instead of tent-poling one vertex.
+    const { ps } = this;
+    const GRIP_SPREAD = 30;
+    const anchors = [];
+    for (const q of this.body.owned) {
+      if (!ps.alive[q]) continue;
+      const dx = ps.x[q] - x, dy = ps.y[q] - y;
+      if (dx * dx + dy * dy > GRIP_SPREAD * GRIP_SPREAD) continue;
+      anchors.push({
+        c: this.solver.add(new AnchorConstraint(q, ps.x[q], ps.y[q], 0, GRAB_COMPLIANCE)),
+        ox: dx, oy: dy,
+      });
+    }
+    if (anchors.length === 0) return false;
+    this.grabs.set(id, { anchors, particle: p, x, y });
     return true;
   }
 

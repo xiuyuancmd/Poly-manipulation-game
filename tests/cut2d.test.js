@@ -116,8 +116,11 @@ test('welds can be glued and then cut again', () => {
   // The welded points must have come together.
   const w = body.welds[0];
   assert.ok(Math.hypot(ps.x[w.a] - ps.x[w.b], ps.y[w.a] - ps.y[w.b]) < 8);
-  // Now slice through the weld seam from outside.
-  performCut(body, -250, 0, 0, 0);
+  // Now slice through the weld seam from outside, aiming at where the welds
+  // actually settled (the welded body may drift while folding shut).
+  const mid = body.welds[Math.floor(body.welds.length / 2)];
+  const mx = (ps.x[mid.a] + ps.x[mid.b]) / 2, my = (ps.y[mid.a] + ps.y[mid.b]) / 2;
+  performCut(body, mx - 260, my, mx + 12, my);
   const events = body.drainEvents().map(e => e.type);
   assert.ok(events.includes('weldCut'), `events: ${events}`);
   assert.ok(body.welds.length < 5);

@@ -38,26 +38,29 @@ export function capsule(cx, cy, length, halfW, rot = 0, segs = 12) {
   return rotateAround(pts, rot, 0, 0).map(p => ({ x: p.x + cx, y: p.y + cy }));
 }
 
-/** Bent capsule (banana): centerline is an arc of `radius` spanning [a0,a1]. */
+/** Bent capsule (banana): centerline is an arc of `radius` spanning [a0,a1],
+ *  with semicircular caps at both arc endpoints. Assumes a1 > a0. */
 export function arcCapsule(cx, cy, radius, halfW, a0, a1, segs = 28) {
-  const outer = [], inner = [];
-  for (let i = 0; i <= segs; i++) {
-    const a = a0 + (i / segs) * (a1 - a0);
-    outer.push({ x: cx + (radius + halfW) * Math.cos(a), y: cy + (radius + halfW) * Math.sin(a) });
-    inner.push({ x: cx + (radius - halfW) * Math.cos(a), y: cy + (radius - halfW) * Math.sin(a) });
+  const pts = [];
+  const at = (R, a) => ({ x: cx + R * Math.cos(a), y: cy + R * Math.sin(a) });
+  // Outer arc a0 -> a1.
+  for (let i = 0; i <= segs; i++) pts.push(at(radius + halfW, a0 + (i / segs) * (a1 - a0)));
+  // End cap: semicircle around the a1 endpoint, sweeping radially-out -> radially-in
+  // through the forward tangent direction.
+  const e1 = at(radius, a1);
+  for (let i = 1; i < 8; i++) {
+    const th = a1 + (i / 8) * Math.PI;
+    pts.push({ x: e1.x + halfW * Math.cos(th), y: e1.y + halfW * Math.sin(th) });
   }
-  // End caps as semicircles around the arc endpoints.
-  const cap = (ang, sign) => {
-    const ex = cx + radius * Math.cos(ang), ey = cy + radius * Math.sin(ang);
-    const pts = [];
-    for (let i = 1; i < 8; i++) {
-      const t = (i / 8) * Math.PI;
-      const dirA = ang + sign * (Math.PI / 2) + sign * t; // sweep from outer to inner side
-      pts.push({ x: ex + halfW * Math.cos(dirA), y: ey + halfW * Math.sin(dirA) });
-    }
-    return pts;
-  };
-  return [...outer, ...cap(a1, 1), ...inner.reverse(), ...cap(a0, -1)];
+  // Inner arc a1 -> a0.
+  for (let i = 0; i <= segs; i++) pts.push(at(radius - halfW, a1 - (i / segs) * (a1 - a0)));
+  // Start cap: semicircle around the a0 endpoint through the backward tangent.
+  const e0 = at(radius, a0);
+  for (let i = 1; i < 8; i++) {
+    const th = a0 + Math.PI + (i / 8) * Math.PI;
+    pts.push({ x: e0.x + halfW * Math.cos(th), y: e0.y + halfW * Math.sin(th) });
+  }
+  return pts;
 }
 
 export function roundedRect(cx, cy, w, h, r, segs = 6) {

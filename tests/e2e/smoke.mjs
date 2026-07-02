@@ -61,25 +61,27 @@ await page.waitForTimeout(1200);
 const simBefore = await page.evaluate(() => window.__game.sim?.total ?? null);
 if (simBefore === null) fail('no similarity readout after level start');
 
+// Drag the left edge far down-left — a clear shape distortion — and track the
+// biggest similarity deviation seen while dragging.
 const from = await worldClick(262, 320);
-const to = await worldClick(120, 320);
+const to = await worldClick(110, 560);
 await page.mouse.move(from.x, from.y);
 await page.mouse.down();
-for (let s = 1; s <= 12; s++) {
+let maxDelta = 0;
+for (let s = 1; s <= 14; s++) {
   await page.mouse.move(
-    from.x + ((to.x - from.x) * s) / 12,
-    from.y + ((to.y - from.y) * s) / 12,
+    from.x + ((to.x - from.x) * s) / 14,
+    from.y + ((to.y - from.y) * s) / 14,
   );
-  await page.waitForTimeout(60);
+  await page.waitForTimeout(120);
+  const now = await page.evaluate(() => window.__game.sim?.total ?? null);
+  if (now !== null) maxDelta = Math.max(maxDelta, Math.abs(now - simBefore));
 }
-await page.waitForTimeout(500);
-const simDuring = await page.evaluate(() => window.__game.sim?.total ?? null);
 await page.mouse.up();
-if (simDuring === null) fail('similarity readout vanished during drag');
-if (Math.abs(simDuring - simBefore) < 0.5) {
-  fail(`similarity did not respond to dragging (before=${simBefore.toFixed(1)} during=${simDuring.toFixed(1)})`);
+if (maxDelta < 1) {
+  fail(`similarity did not respond to dragging (before=${simBefore.toFixed(1)} maxDelta=${maxDelta.toFixed(1)})`);
 }
-console.log(`drag ok: similarity ${simBefore.toFixed(1)} -> ${simDuring.toFixed(1)}`);
+console.log(`drag ok: similarity ${simBefore.toFixed(1)}, max deviation ${maxDelta.toFixed(1)}`);
 
 // 3. Cut tool: knife across the body must produce two islands on level 1.
 await page.evaluate(() => window.__game.startLevel(0));

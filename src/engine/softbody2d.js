@@ -8,11 +8,12 @@ import { pointInPolygon, resamplePolyline, ringSignedArea, polylineLength } from
 // Hidden per-pipe material presets. Pipes all LOOK identical in game; these
 // numbers are what the player discovers by experimenting.
 export const PIPE_STYLES = {
-  normal:      { compliance: 3e-4, restFactor: 1.0 },
-  rigid:       { compliance: 1e-6, restFactor: 1.0 },
-  contractile: { compliance: 5e-5, restFactor: 0.62 },
-  pressure:    { compliance: 2e-4, restFactor: 1.0, loopCompliance: 2e-6, inflate: 1.5, bodyInflation: 0.5 },
-  brittle:     { compliance: 1e-4, restFactor: 1.0, breakStrain: 1.8 },
+  //                stretch      rest      bending (skip-2; null = floppy)
+  normal:      { compliance: 3e-4, restFactor: 1.0, bendCompliance: 6e-4 },
+  rigid:       { compliance: 1e-6, restFactor: 1.0, bendCompliance: 2e-6 },
+  contractile: { compliance: 3e-5, restFactor: 0.58, bendCompliance: null },
+  pressure:    { compliance: 2e-4, restFactor: 1.0, bendCompliance: null, loopCompliance: 2e-6, inflate: 1.5, bodyInflation: 0.5 },
+  brittle:     { compliance: 1e-4, restFactor: 1.0, bendCompliance: 8e-5, breakStrain: 1.8 },
 };
 
 let nextIslandId = 1;
@@ -24,9 +25,15 @@ export class SoftBody2D {
     this.solver = solver;
     this.edgeLen = config.edgeLen ?? 16;
     this.basePressure = config.basePressure ?? 1.0;
-    this.boundaryCompliance = config.boundaryCompliance ?? 1e-5;
-    this.bendCompliance = config.bendCompliance ?? 1.5e-3;
-    this.latticeCompliance = config.latticeCompliance ?? 5e-4;
+    // Elastic membrane: the boundary can stretch noticeably under sustained
+    // pull — target shapes may demand up to ~10% more perimeter than the rest
+    // outline (a hard-inextensible ring would make elongated targets unreachable).
+    this.boundaryCompliance = config.boundaryCompliance ?? 6e-5;
+    // Bend: smooth boundary (suppresses wrinkle noise on deflated bodies).
+    // Lattice: gentle shape memory — strong enough to spring back, weak enough
+    // that 3 pins can hold a 2:1 aspect change (else most targets are unreachable).
+    this.bendCompliance = config.bendCompliance ?? 8e-4;
+    this.latticeCompliance = config.latticeCompliance ?? 1.5e-3;
     this.coupleCompliance = config.coupleCompliance ?? 8e-4;
 
     this.islands = [];   // {id, ring:[particle...], areaC, baseRestArea, alive, edgeCs:[], bendCs:[]}
@@ -172,24 +179,58 @@ export class SoftBody2D {
       const area = Math.abs(ringSignedArea(ps, parts)) * (style.inflate ?? 1.5);
       pipe.areaC = solver.add(new AreaConstraint2D(parts, area, style.loopCompliance ?? 2e-6));
     }
-    // Soft coupling of every pipe particle to its 2 nearest boundary particles.
+    this.buildPipeTie(pipe);
+    this.buildPipeBends(pipe);
+    // Couple pipe particles to their 2 nearest boundary particles. Mid-chain
+    // particles get rope tethers (resist stretch only, so an inflating loop can
+    // drift freely); the ENDS of open pipes are anchored bilaterally — tendon
+    // insertions — so muscles and struts actually transmit force to the wall.
     const ringAll = [];
     for (const isl of this.islands) if (isl.alive) ringAll.push(...isl.ring);
     const coupleMax = this.edgeLen * 8;
     for (const p of parts) {
+      const isEnd = !pipe.closed && (p === parts[0] || p === parts[parts.length - 1]);
       const near = ringAll
         .map(r => ({ r, d: Math.hypot(ps.x[r] - ps.x[p], ps.y[r] - ps.y[p]) }))
         .filter(e => e.d < coupleMax)
         .sort((u, v) => u.d - v.d)
         .slice(0, 2);
       for (const e of near) {
-        // Rope-like tether: lets the pipe drift closer to the wall (e.g. when a
-        // pressure loop inflates) without pushing it around, but resists stretch.
-        pipe.coupleCs.push({ a: p, b: e.r, c: solver.add(new DistanceConstraint(p, e.r, e.d, this.coupleCompliance, true)) });
+        const c = isEnd
+          ? new DistanceConstraint(p, e.r, e.d, 1.2e-4, false)
+          : new DistanceConstraint(p, e.r, e.d, this.coupleCompliance, true);
+        pipe.coupleCs.push({ a: p, b: e.r, c: solver.add(c) });
       }
     }
     this.pipes.push(pipe);
     return pipe;
+  }
+
+  /** A muscle must pull its ENDS together — per-segment contraction alone lets
+   *  the chain coil up slack. Tie the endpoints with the contracted total length.
+   *  Severing the chain removes the tie: cutting a tendon releases its pull. */
+  buildPipeTie(pipe) {
+    if (pipe.tieC) { this.solver.remove(pipe.tieC); pipe.tieC = null; }
+    if (pipe.closed || pipe.type !== 'contractile' || pipe.parts.length < 3) return;
+    const rest = pipe.segCs.reduce((s, e) => s + e.c.rest, 0);
+    const a = pipe.parts[0], b = pipe.parts[pipe.parts.length - 1];
+    pipe.tieC = this.solver.add(new DistanceConstraint(a, b, rest, pipe.props.compliance));
+  }
+
+  /** Skip-2 bending springs along a chain, per material. Rebuilt after surgery. */
+  buildPipeBends(pipe) {
+    const { ps, solver } = this;
+    for (const b of pipe.bendCs ?? []) solver.remove(b.c);
+    pipe.bendCs = [];
+    const bc = pipe.props.bendCompliance;
+    if (bc == null) return;
+    const parts = pipe.parts, n = parts.length;
+    const m = pipe.closed ? n : n - 2;
+    for (let k = 0; k < m; k++) {
+      const a = parts[k], b = parts[(k + 2) % n];
+      const rest = Math.hypot(ps.x[b] - ps.x[a], ps.y[b] - ps.y[a]) * pipe.props.restFactor;
+      pipe.bendCs.push({ a, b, c: solver.add(new DistanceConstraint(a, b, rest, bc)) });
+    }
   }
 
   // ---- pressure coupling ---------------------------------------------------
@@ -240,6 +281,8 @@ export class SoftBody2D {
       pipe.parts = pipe.parts.slice(at).concat(pipe.parts.slice(0, at));
       pipe.segCs = pipe.segCs.slice(segIdx + 1).concat(pipe.segCs.slice(0, segIdx));
       pipe.closed = false;
+      this.buildPipeTie(pipe);
+      this.buildPipeBends(pipe);
       if (pipe.areaC) {
         this.solver.remove(pipe.areaC);
         pipe.areaC = null;
@@ -255,16 +298,25 @@ export class SoftBody2D {
     const partsB = pipe.parts.slice(segIdx + 1);
     const segA = pipe.segCs.slice(0, segIdx);
     const segB = pipe.segCs.slice(segIdx + 1);
+    for (const b of pipe.bendCs ?? []) this.solver.remove(b.c);
+    if (pipe.tieC) { this.solver.remove(pipe.tieC); pipe.tieC = null; }
     const splitCouples = (parts) => pipe.coupleCs.filter(cc => parts.includes(cc.a));
-    const mkPipe = (parts, segCs) => ({
-      ...pipe,
-      id: nextPipeId++,
-      parts,
-      segCs,
-      coupleCs: splitCouples(parts),
-      areaC: null,
-      closed: false,
-    });
+    const mkPipe = (parts, segCs) => {
+      const np = {
+        ...pipe,
+        id: nextPipeId++,
+        parts,
+        segCs,
+        coupleCs: splitCouples(parts),
+        bendCs: [],
+        tieC: null,
+        areaC: null,
+        closed: false,
+      };
+      this.buildPipeTie(np); // each fragment keeps contracting along itself
+      this.buildPipeBends(np);
+      return np;
+    };
     const out = [];
     for (const [parts, segCs] of [[partsA, segA], [partsB, segB]]) {
       if (parts.length >= 2) {

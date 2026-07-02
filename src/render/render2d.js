@@ -111,7 +111,7 @@ function drawControls(ctx, session) {
     ctx.strokeStyle = COLORS.grab;
     ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.moveTo(g.anchor.tx, g.anchor.ty);
+    ctx.moveTo(g.x, g.y);
     ctx.lineTo(ps.x[g.particle], ps.y[g.particle]);
     ctx.stroke();
     ctx.fillStyle = COLORS.grab;

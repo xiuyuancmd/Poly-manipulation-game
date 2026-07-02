@@ -280,5 +280,10 @@ function sweepDeadConstraints(body) {
   for (const pipe of body.pipes) {
     if (!pipe.alive) continue;
     pipe.coupleCs = pipe.coupleCs.filter(e => (dead(e) ? (solver.remove(e.c), false) : true));
+    pipe.bendCs = (pipe.bendCs ?? []).filter(e => (dead(e) ? (solver.remove(e.c), false) : true));
+    if (pipe.tieC && (!ps.alive[pipe.tieC.i] || !ps.alive[pipe.tieC.j])) {
+      solver.remove(pipe.tieC);
+      pipe.tieC = null;
+    }
   }
 }

@@ -3,6 +3,7 @@
 // user-facing strings are Chinese.
 
 import { drawTargetPreview } from '../render/render2d.js';
+import { drawTargetPreview3D } from '../render/render3d.js';
 
 const RING_R = 40;
 const RING_C = 2 * Math.PI * RING_R;
@@ -124,7 +125,8 @@ export class HUD {
     this.els.progress.textContent = `目标 ${index + 1}/${total}`;
     this.els.targetName.textContent = spec.name ? `「${spec.name}」` : '';
     this.els.cutoffLabel.textContent = `达标线 ${cutoff} · 保持 3 秒`;
-    drawTargetPreview(this.els.preview, spec);
+    if (spec.is3D) drawTargetPreview3D(this.els.preview, spec);
+    else drawTargetPreview(this.els.preview, spec);
   }
 
   setScore(sim, cutoff, holdFrac) {

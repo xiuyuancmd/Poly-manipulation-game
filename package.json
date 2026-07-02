@@ -1,0 +1,13 @@
+{
+  "name": "polyform",
+  "version": "0.1.0",
+  "description": "形变工坊 PolyForm — 柔性多边形塑形解谜游戏（纯静态网页，自研 XPBD 软体物理）",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "serve": "python3 -m http.server 8080",
+    "test": "node --test tests/",
+    "e2e": "node tests/e2e/smoke.mjs"
+  },
+  "license": "MIT"
+}

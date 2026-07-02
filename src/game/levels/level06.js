@@ -28,6 +28,10 @@ export default {
       topology: { chains: 2, loops: 0 },
       weights: { outline: 0.8, pipes: 0.2 },
       hint: '里面那根斜撑不断，它就压不扁。切割工具点管道试试。',
+      moreHints: [
+        { t: 40, text: '换切割工具（按 2），对准那根斜撑点一下。' },
+        { t: 85, text: '剪断后：钉住底面，抓顶面往下压扁，跟着虚线框走。' },
+      ],
     },
     {
       name: '方柱',
@@ -39,6 +43,10 @@ export default {
       topology: { chains: 2, loops: 0 },
       weights: { outline: 0.8, pipes: 0.2 },
       hint: '钉住底面一角，抓住顶面往上拔。慢慢来。',
+      moreHints: [
+        { t: 45, text: '双击钉住底面两个角，抓顶面中心往上拔高。' },
+        { t: 90, text: '拖空白处转个视角，检查四面是否都收窄了。' },
+      ],
     },
   ],
 };

@@ -81,6 +81,9 @@ export class Game {
     this.bannerT = 0;
     this.bestTotal = 0;
     this.smooth = { total: 0, outline: 0, pipes: 0 };
+    this.targetTime = 0;
+    this.hintQueue = [...(def.targets[0].moreHints ?? [])];
+    this._cutTipShown = false;
     this.setTool('pull');
     this.state = 'playing';
     this.hud.showGame(`${i + 1} · ${def.name}`);
@@ -101,6 +104,10 @@ export class Game {
     }
     this.tool = t;
     this.hud.setTool(t);
+    if (t === 'cut' && !this._cutTipShown && this.session) {
+      this._cutTipShown = true;
+      this.hud.toast(this.session.dim === 3 ? '对准管道点一下即可剪断' : '从软体外面按住，划一条线切进去', 3200);
+    }
   }
 
   // ---- main loop -------------------------------------------------------------
@@ -115,6 +122,13 @@ export class Game {
     if (this.state === 'playing') {
       this.timeLeft -= dt;
       this.hud.setTimer(this.timeLeft);
+      // Progressive hints: the longer a target stalls, the blunter the advice.
+      this.targetTime += dt;
+      while (this.hintQueue.length && this.targetTime >= this.hintQueue[0].t) {
+        const h = this.hintQueue.shift();
+        this.hud.setHint(h.text);
+        this.hud.toast(h.text, 4200);
+      }
       if (this.timeLeft <= 0) this.lose();
       else {
         this.simT += dt;
@@ -166,6 +180,8 @@ export class Game {
     this.bestTotal = 0;
     if (this.targetIdx >= this.def.targets.length) return this.win();
     this.state = 'playing';
+    this.targetTime = 0;
+    this.hintQueue = [...(this.def.targets[this.targetIdx].moreHints ?? [])];
     this.hud.setTarget(this.targetIdx, this.def.targets.length, this.session.specs[this.targetIdx], this.cutoff());
     this.hud.setHint(this.def.targets[this.targetIdx].hint ?? '');
   }

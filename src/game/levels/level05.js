@@ -32,6 +32,9 @@ export default {
         { points: circle(CX - 50, CY + 50, 37, 16), closed: true },
       ],
       hint: '先把它揉圆。感受一下每根管子的脾气。',
+      moreHints: [
+        { t: 45, text: '顶上那根筋把头顶拽平了——揉圆时重点补顶部和底部。' },
+      ],
     },
     {
       name: '宽饼',
@@ -44,6 +47,10 @@ export default {
       ],
       weights: { outline: 0.7, pipes: 0.3 },
       hint: '左下角藏着一个气袋。放了它，但别伤到别的管子。',
+      moreHints: [
+        { t: 40, text: '从左下角外面斜着切一小刀，刚好够到那个小环就停。' },
+        { t: 85, text: '泄气后钉住左右两端，把身体压成宽饼。' },
+      ],
     },
     {
       name: '双丸',
@@ -59,6 +66,10 @@ export default {
       ],
       weights: { outline: 0.85, pipes: 0.15 },
       hint: '手起刀落，一分为二，再把两团分开摆好。',
+      moreHints: [
+        { t: 40, text: '从正上方外面往下垂直一刀切到底，把身体劈成两半。' },
+        { t: 85, text: '抓住其中一半拖远一点，摆成左右两团。' },
+      ],
     },
     {
       name: '方塔',
@@ -74,6 +85,10 @@ export default {
       ],
       weights: { outline: 0.85, pipes: 0.15 },
       hint: '把两团摞起来，用粘合缝住接缝，堆成一座塔。',
+      moreHints: [
+        { t: 40, text: '把一团拖到另一团的正上方，让它们贴在一起。' },
+        { t: 85, text: '换粘合工具：按住上团的下边缘，拖到下团的上边缘松开，缝两针更牢。' },
+      ],
     },
   ],
 };

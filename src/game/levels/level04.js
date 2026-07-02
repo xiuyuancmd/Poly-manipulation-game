@@ -32,6 +32,9 @@ export default {
         { points: circle(CX + 54, CY + 54, 37, 16), closed: true },
       ],
       hint: '先别切！它鼓着呢，捏圆就好。小心：有根管子很脆。',
+      moreHints: [
+        { t: 45, text: '把五个角轻轻往里揉圆。动作轻点——猛拉会把脆管拉断。' },
+      ],
     },
     {
       name: '风筝',
@@ -47,6 +50,10 @@ export default {
       ],
       weights: { outline: 0.7, pipes: 0.3 },
       hint: '放掉右下角的气，但留着那根硬骨头，撑住风筝的左角。',
+      moreHints: [
+        { t: 40, text: '从右下角外面斜着切一小刀，只切断那个小环。' },
+        { t: 85, text: '左边那根横着的硬管别动——它是风筝左角的骨架。' },
+      ],
     },
     {
       name: '软气球',
@@ -61,6 +68,9 @@ export default {
       ],
       weights: { outline: 0.8, pipes: 0.2 },
       hint: '现在，把最后那根硬骨头也剪断，让它彻底放松。',
+      moreHints: [
+        { t: 40, text: '从左边外面横着切进去，切断那根硬管，然后揉圆。' },
+      ],
     },
   ],
 };

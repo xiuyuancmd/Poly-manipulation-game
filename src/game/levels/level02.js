@@ -25,16 +25,21 @@ export default {
     {
       name: '饱满的蛋',
       _expectFactor: 1.35,
-      outlines: [ellipse(CX, CY, 125, 97)],
+      _restBelow: 83,
+      outlines: [ellipse(CX, CY, 140, 86.5)],
       pipes: [{ points: circle(CX, CY, 67, 24), closed: true }],
       hint: '它天生就是鼓的——轻轻按两下就能凑出形状。',
+      moreHints: [
+        { t: 40, text: '抓住上下两侧往里按，把它压成横躺的蛋。' },
+        { t: 80, text: '双击可以钉住一个点，腾出手来压另一边。' },
+      ],
     },
     {
       name: '软枕头',
       _expectFactor: 0.8,
       // Discovery target: the lesson is "cut the loop to deflate", not shape
       // precision — a deflated floppy bag is inherently hard to mold exactly.
-      cutoff: 75,
+      cutoff: 72,
       // Area needs the deflated factor AND perimeter matches the rest outline
       // (593 vs 597) — the bag can relax into this shape without any stretch.
       outlines: [capsule(CX, CY, 235, 54)],
@@ -43,6 +48,11 @@ export default {
       pipes: [{ points: ellipse(CX, CY, 88, 36, 24), closed: false }],
       weights: { outline: 0.7, pipes: 0.3 },
       hint: '怎么压都压不瘪？也许该请出剪刀。切下去就回不了头了。',
+      moreHints: [
+        { t: 30, text: '它鼓着气，光靠压是压不瘪的。想想里面那圈管道是干什么的。' },
+        { t: 60, text: '换切割工具（按 2），从软体外面往里划一刀，切断里面那圈环形管道。' },
+        { t: 105, text: '泄气之后：双击钉住左右两端，再把上下压扁，凑成枕头的比例。' },
+      ],
     },
   ],
 };

@@ -66,13 +66,16 @@ export class Effects {
   /** deflate: an 8–10 particle first-frame burst along `dir`, then a 0.45 s
    *  emitter keeps blowing ~150 particles/s (2–3 per frame) out of the cut —
    *  a pressure loop does not empty in one frame. Everything is dead well
-   *  under a second after the emitter stops. */
-  spawnJet(x, y, dirX, dirY) {
+   *  under a second after the emitter stops.
+   *  `intensity` scales burst size and emitter rate (bio pulsatile bleed:
+   *  each heartbeat spurt is weaker than the last); 1 = reference jet,
+   *  bit-identical to the pre-intensity behaviour. */
+  spawnJet(x, y, dirX, dirY, intensity = 1) {
     const rng = makeRng(this.seed(x, y));
     const base = Math.atan2(dirY, dirX);
-    const burst = 8 + Math.floor(rng() * 3);
+    const burst = Math.max(2, Math.round((8 + Math.floor(rng() * 3)) * intensity));
     for (let i = 0; i < burst; i++) this.jetSpark(x, y, base, rng);
-    this.emitters.push({ x, y, base, rng, age: 0, life: 0.45, rate: 150, carry: 0 });
+    this.emitters.push({ x, y, base, rng, age: 0, life: 0.45, rate: 150 * intensity, carry: 0 });
   }
 
   /** One escaping particle in a ±0.45 rad cone around `base`. Air (lab): a

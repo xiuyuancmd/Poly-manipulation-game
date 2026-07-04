@@ -32,14 +32,35 @@ export class ParticleSystem {
 }
 
 /** Distance constraint between two particles. `unilateral` = rope: resists
- *  stretching only, so tethered parts can move closer but not further apart. */
+ *  stretching only, so tethered parts can move closer but not further apart.
+ *
+ *  Optional viscoelastic material opts (all default OFF = legacy behaviour):
+ *    creepK      1/s — SLS creep: sustained stretch migrates `rest` toward the
+ *                current length (tissue flows under held load);
+ *    recoverK    1/s — `rest` relaxes back toward the built rest0 once the
+ *                load is gone (no permanent set unless held very long);
+ *    creepOnset  strain dead zone: |len/rest0 - 1| <= onset only recovers,
+ *                never creeps (small handling doesn't remodel the membrane);
+ *    restLo/Hi   clamp on rest as a fraction of rest0 (runaway guard);
+ *    hardenK/hardenOnset — J-curve collagen recruitment: above `hardenOnset`
+ *                strain the effective compliance divides by
+ *                (1 + hardenK·excess²), so large stretches lock up.
+ *  relax() is only ever called when the owning Solver has viscoelastic=true. */
 export class DistanceConstraint {
-  constructor(i, j, rest, compliance = 0, unilateral = false) {
+  constructor(i, j, rest, compliance = 0, unilateral = false, opts = {}) {
     this.i = i; this.j = j;
     this.rest = rest;
+    this.rest0 = rest;
     this.compliance = compliance;
     this.unilateral = unilateral;
     this.broken = false;
+    this.creepK = opts.creepK ?? 0;
+    this.recoverK = opts.recoverK ?? 0;
+    this.creepOnset = opts.creepOnset ?? 0;
+    this.restLo = opts.restLo ?? 0.5;
+    this.restHi = opts.restHi ?? 2.0;
+    this.hardenK = opts.hardenK ?? 0;
+    this.hardenOnset = opts.hardenOnset ?? 0;
   }
 
   solve(ps, h) {
@@ -52,11 +73,38 @@ export class DistanceConstraint {
     if (len < 1e-9) return;
     const C = len - this.rest;
     if (this.unilateral && C < 0) return;
-    const alphaT = this.compliance / (h * h);
+    // J-curve hardening: hardenK = 0 takes the exact legacy arithmetic.
+    let compliance = this.compliance;
+    if (this.hardenK) {
+      const excess = Math.max(0, len / this.rest - 1 - this.hardenOnset);
+      compliance = this.compliance / (1 + this.hardenK * excess * excess);
+    }
+    const alphaT = compliance / (h * h);
     const dl = -C / (w + alphaT);
     dx /= len; dy /= len; dz /= len;
     ps.x[i] -= wi * dl * dx; ps.y[i] -= wi * dl * dy; ps.z[i] -= wi * dl * dz;
     ps.x[j] += wj * dl * dx; ps.y[j] += wj * dl * dy; ps.z[j] += wj * dl * dz;
+  }
+
+  /** SLS viscoelastic rest-length migration (once per FRAME, driven by the
+   *  Solver when viscoelastic=true). d(rest)/dt = creepK·(len - rest)
+   *  - recoverK·(rest - rest0), with a strain dead zone (below creepOnset the
+   *  membrane only recovers) and a hard [restLo, restHi]×rest0 clamp. */
+  relax(ps, dt) {
+    if (!this.creepK && !this.recoverK) return;
+    if (this.rest0 < 1e-9) return;
+    const len = Math.hypot(
+      ps.x[this.j] - ps.x[this.i],
+      ps.y[this.j] - ps.y[this.i],
+      ps.z[this.j] - ps.z[this.i],
+    );
+    let d = -this.recoverK * (this.rest - this.rest0);
+    if (Math.abs(len / this.rest0 - 1) > this.creepOnset) d += this.creepK * (len - this.rest);
+    if (d === 0) return;
+    this.rest += d * dt;
+    const lo = this.restLo * this.rest0, hi = this.restHi * this.rest0;
+    if (this.rest < lo) this.rest = lo;
+    else if (this.rest > hi) this.rest = hi;
   }
 
   currentStrain(ps) {
@@ -213,6 +261,9 @@ export class Solver {
     this.constraints = new Set();
     this.substeps = 8;
     this.damping = 0.982;   // per-frame velocity retain factor
+    // Viscoelastic material pass: OFF by default (legacy behaviour). When on,
+    // constraints exposing relax() migrate their rest state once per frame.
+    this.viscoelastic = false;
   }
 
   add(c) { this.constraints.add(c); return c; }
@@ -249,6 +300,13 @@ export class Solver {
     for (let i = 0; i < n; i++) {
       if (!ps.alive[i]) continue;
       ps.vx[i] *= d; ps.vy[i] *= d; ps.vz[i] *= d;
+    }
+    // Viscoelastic rest migration: once per FRAME (not per substep), so the
+    // creep rates in the material profiles read directly in 1/s.
+    if (this.viscoelastic) {
+      for (const c of this.constraints) {
+        if (!c.broken) c.relax?.(ps, dt);
+      }
     }
   }
 }

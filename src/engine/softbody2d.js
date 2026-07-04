@@ -41,6 +41,19 @@ export class SoftBody2D {
     // the pre-easing behaviour; the game session opts in for the felt
     // transition. Construction always snaps to the goal regardless.
     this.pressureSlew = config.pressureSlew ?? 0;
+    // Material profile (bio theme): optional viscoelastic material opts. All
+    // default null/undefined = legacy behaviour, bit-exact.
+    //  - membrane (boundary edges): creep + J-curve hardening — skin flows
+    //    under held load and locks up under large stretch (collagen);
+    //  - lattice (interior gel): creep only — the interior remodels but must
+    //    NOT lock, or large authored shape changes become unreachable.
+    this.membraneCreep = config.membraneCreep ?? null;
+    this.membraneHarden = config.membraneHarden ?? null;
+    this.membraneOpts = (this.membraneCreep || this.membraneHarden)
+      ? { ...(this.membraneCreep ?? {}), ...(this.membraneHarden ?? {}) }
+      : undefined;
+    this.latticeOpts = this.membraneCreep ? { ...this.membraneCreep } : undefined;
+    this.pipeStyles = config.pipeStyles;
 
     this.islands = [];   // {id, ring:[particle...], areaC, baseRestArea, alive, edgeCs:[], bendCs:[]}
     this.latticeCs = []; // {c, a, b}
@@ -115,7 +128,10 @@ export class SoftBody2D {
     for (let k = 0; k < n; k++) {
       const a = ring[k], b = ring[(k + 1) % n];
       const rest = Math.hypot(ps.x[b] - ps.x[a], ps.y[b] - ps.y[a]);
-      island.edgeCs.push({ a, b, c: solver.add(new DistanceConstraint(a, b, rest, this.boundaryCompliance)) });
+      island.edgeCs.push({
+        a, b,
+        c: solver.add(new DistanceConstraint(a, b, rest, this.boundaryCompliance, false, this.membraneOpts)),
+      });
     }
     for (let k = 0; k < n; k++) {
       const a = ring[k], b = ring[(k + 2) % n];
@@ -148,14 +164,18 @@ export class SoftBody2D {
         }
         if (!inside) continue;
         const rest = Math.hypot(ps.x[B] - ps.x[A], ps.y[B] - ps.y[A]);
-        this.latticeCs.push({ a: A, b: B, c: solver.add(new DistanceConstraint(A, B, rest, compliance)) });
+        this.latticeCs.push({
+          a: A, b: B,
+          c: solver.add(new DistanceConstraint(A, B, rest, compliance, false, this.latticeOpts)),
+        });
       }
     }
   }
 
   addPipe(pd) {
     const { ps, solver } = this;
-    const style = { ...PIPE_STYLES[pd.type ?? 'normal'], ...(pd.overrides ?? {}) };
+    const type = pd.type ?? 'normal';
+    const style = { ...PIPE_STYLES[type], ...(this.pipeStyles?.[type] ?? {}), ...(pd.overrides ?? {}) };
     const spacing = this.edgeLen * 0.9;
     const len = polylineLength(pd.path, !!pd.closed);
     const count = Math.max(3, Math.round(len / spacing) + (pd.closed ? 0 : 1));

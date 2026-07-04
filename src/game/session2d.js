@@ -27,14 +27,29 @@ export class Session2D {
       pipes: def.pipes ?? [],
       pressureSlew: def.body.pressureSlew ?? 0.04,
     });
+    // Authored-pose snapshot BEFORE the settle transient: the pressure/cable
+    // transient can spin the whole specimen tens of degrees while settling,
+    // leaving the live piece visibly rotated against its HUD preview.
+    const prePose = [];
+    for (const i of this.body.owned) {
+      if (this.ps.alive[i]) prePose.push({ i, x: this.ps.x[i], y: this.ps.y[i] });
+    }
     this.body.settle(150);
     this.body.drainEvents();
+    this.derotate(prePose);
 
     // Workbench datum: where the clamped specimen rests. Drives the idle
     // re-centering in step() and the clamp-frame renderer.
     const rest = this.measureBody();
     this.anchor = { x: rest.cx, y: rest.cy };
     this.restBBox = rest.bbox;
+    // Rest-pose snapshot (per-particle) for the idle ROTATION ease-back:
+    // 2D Kabsch against this pose tells us how far the released specimen has
+    // spun away from its clamped orientation.
+    this.restPose = new Map();
+    for (const i of this.body.owned) {
+      if (this.ps.alive[i]) this.restPose.set(i, { x: this.ps.x[i], y: this.ps.y[i] });
+    }
 
     this.effects = new Effects();
     this.grabs = new Map();   // pointerId -> {anchor, particle}
@@ -121,6 +136,13 @@ export class Session2D {
     // AND px/py leaves every constraint residual and velocity untouched, and
     // similarity is translation-invariant — physically and score-wise inert.
     if (this.grabs.size === 0 && this.pins.size === 0 && this.anchor) {
+      // Rotation first (it preserves the centroid, so the translation below
+      // stays valid). Intact single specimen only — cut fragments keep the
+      // orientation the player left them in.
+      if (this.body.aliveIslands().length === 1) {
+        this.despin();
+        if (this.restPose) this.rotateHome(dt);
+      }
       const m = this.measureBody();
       if (m.n > 0) {
         const dx = this.anchor.x - m.cx, dy = this.anchor.y - m.cy;
@@ -136,6 +158,115 @@ export class Session2D {
           }
         }
       }
+    }
+  }
+
+  /** Undo the settle transient's net rigid rotation (2D Kabsch vs the
+   *  authored layout), so the specimen greets the player in the same
+   *  orientation as its HUD preview. A uniform rigid rotation of positions
+   *  (velocities are zero after settle) is physics- and score-inert. */
+  derotate(prePose) {
+    const { ps } = this;
+    let rcx = 0, rcy = 0, ccx = 0, ccy = 0, n = 0;
+    for (const p of prePose) {
+      if (!ps.alive[p.i]) continue;
+      rcx += p.x; rcy += p.y; ccx += ps.x[p.i]; ccy += ps.y[p.i]; n++;
+    }
+    if (n < 3) return;
+    rcx /= n; rcy /= n; ccx /= n; ccy /= n;
+    let sinS = 0, cosS = 0;
+    for (const p of prePose) {
+      if (!ps.alive[p.i]) continue;
+      const rx = p.x - rcx, ry = p.y - rcy;
+      const cx = ps.x[p.i] - ccx, cy = ps.y[p.i] - ccy;
+      sinS += rx * cy - ry * cx;
+      cosS += rx * cx + ry * cy;
+    }
+    const theta = Math.atan2(sinS, cosS);
+    if (Math.abs(theta) < 1e-4) return;
+    const cos = Math.cos(-theta), sin = Math.sin(-theta);
+    for (const i of this.body.owned) {
+      if (!ps.alive[i]) continue;
+      const dx = ps.x[i] - ccx, dy = ps.y[i] - ccy;
+      ps.x[i] = ccx + dx * cos - dy * sin;
+      ps.y[i] = ccy + dx * sin + dy * cos;
+      ps.px[i] = ps.x[i]; ps.py[i] = ps.y[i];
+    }
+  }
+
+  /** Remove the net rigid-body angular velocity about the centroid. The
+   *  sequential (Gauss-Seidel) constraint solver pumps a small steady angular
+   *  momentum into pressure-loaded bodies — un-held specimens on L2/L4/L5
+   *  slowly pirouette at rest, dragging their pipes with them. The clamp
+   *  fixture holds the specimen instead: subtracting the UNIFORM rigid
+   *  rotation field leaves every deformation velocity and constraint residual
+   *  untouched (similarity is rotation-invariant too), so this is as inert as
+   *  the translation re-centering below. */
+  despin() {
+    const { ps } = this;
+    const m = this.measureBody();
+    if (m.n < 3) return;
+    let L = 0, I = 0;
+    for (const i of this.body.owned) {
+      if (!ps.alive[i]) continue;
+      const dx = ps.x[i] - m.cx, dy = ps.y[i] - m.cy;
+      L += dx * ps.vy[i] - dy * ps.vx[i];
+      I += dx * dx + dy * dy;
+    }
+    if (I < 1e-9) return;
+    const omega = L / I;
+    if (Math.abs(omega) < 1e-6) return;
+    for (const i of this.body.owned) {
+      if (!ps.alive[i]) continue;
+      ps.vx[i] += (ps.y[i] - m.cy) * omega;
+      ps.vy[i] -= (ps.x[i] - m.cx) * omega;
+    }
+  }
+
+  /** Idle rotation ease-back: 2D Kabsch of the surviving particles against the
+   *  rest-pose snapshot gives the residual spin θ; rotate the whole live body
+   *  a bounded step (max 20°/s) back toward θ = 0 about its CURRENT centroid.
+   *  A uniform rotation of x/y and px/py leaves every constraint residual
+   *  untouched and similarity is rotation-invariant — physically and
+   *  score-wise inert, exactly like the translation above. Dead zone 0.01 rad
+   *  so a settled specimen never micro-hunts. */
+  rotateHome(dt) {
+    const { ps } = this;
+    // Matched subset: particles alive now AND present in the rest snapshot.
+    let rcx = 0, rcy = 0, ccx = 0, ccy = 0, n = 0;
+    for (const [i, r] of this.restPose) {
+      if (!ps.alive[i]) continue;
+      rcx += r.x; rcy += r.y; ccx += ps.x[i]; ccy += ps.y[i]; n++;
+    }
+    if (n < 3) return;
+    rcx /= n; rcy /= n; ccx /= n; ccy /= n;
+    let sinS = 0, cosS = 0;
+    for (const [i, r] of this.restPose) {
+      if (!ps.alive[i]) continue;
+      const rx = r.x - rcx, ry = r.y - rcy;
+      const cx = ps.x[i] - ccx, cy = ps.y[i] - ccy;
+      sinS += rx * cy - ry * cx;
+      cosS += rx * cx + ry * cy;
+    }
+    const theta = Math.atan2(sinS, cosS); // rest -> current spin
+    if (Math.abs(theta) < 0.01) return;   // dead zone
+    // Near home: gentle 20°/s glide. Far from home (a wild drag can wind the
+    // piece up >100°): proportional boost so ANY windup squares itself away
+    // within ~4 s — a fixed 20°/s would need up to 9 s from 180°. The clamp
+    // to |theta| makes overshoot impossible, so this stays monotone.
+    const BASE_RATE = 20 * Math.PI / 180;
+    const rate = Math.max(BASE_RATE, Math.abs(theta) * 0.7);
+    const d = -Math.sign(theta) * Math.min(Math.abs(theta), rate * dt);
+    const cos = Math.cos(d), sin = Math.sin(d);
+    const m = this.measureBody();
+    for (const i of this.body.owned) {
+      if (!ps.alive[i]) continue;
+      const dx = ps.x[i] - m.cx, dy = ps.y[i] - m.cy;
+      ps.x[i] = m.cx + dx * cos - dy * sin;
+      ps.y[i] = m.cy + dx * sin + dy * cos;
+      const qx = ps.px[i] - m.cx, qy = ps.py[i] - m.cy;
+      ps.px[i] = m.cx + qx * cos - qy * sin;
+      ps.py[i] = m.cy + qx * sin + qy * cos;
     }
   }
 
@@ -246,5 +377,60 @@ export class Session2D {
     this.body.emit('pinned');
   }
 
-  drainEvents() { return this.body.drainEvents(); }
+  drainEvents() {
+    const evts = this.body.drainEvents();
+    // Cable recoil: a severed tension cable stores real elastic energy — kick
+    // the freed fragment tips back along the chain and leave a brief
+    // after-image. Session layer only: writes pipe-particle velocities,
+    // never constraints, never boundary/matrix particles.
+    for (const e of evts) {
+      if (e.type === 'pipeCut' && e.pipeType === 'contractile'
+          && Number.isFinite(e.x) && Number.isFinite(e.y)) {
+        this.cableRecoil(e.x, e.y);
+      }
+    }
+    return evts;
+  }
+
+  /** Find the (at most two) live contractile fragments whose freed end sits
+   *  within 40 px of the cut, throw their 3–4 tip particles back along the
+   *  local chain tangent (220 px/s at the tip decaying to 60 px/s, capped at
+   *  250 px/s per particle) and hand a snapshot to the whip after-image. */
+  cableRecoil(x, y) {
+    const { ps } = this;
+    const frags = [];
+    for (const pipe of this.body.pipes) {
+      if (!pipe.alive || pipe.type !== 'contractile' || pipe.closed || pipe.parts.length < 2) continue;
+      const first = pipe.parts[0], last = pipe.parts[pipe.parts.length - 1];
+      const dFirst = Math.hypot(ps.x[first] - x, ps.y[first] - y);
+      const dLast = Math.hypot(ps.x[last] - x, ps.y[last] - y);
+      const d = Math.min(dFirst, dLast);
+      if (d < 40) frags.push({ pipe, fromStart: dFirst <= dLast, d });
+    }
+    frags.sort((a, b) => a.d - b.d);
+    const snapshots = [];
+    for (const { pipe, fromStart } of frags.slice(0, 2)) {
+      const parts = pipe.parts;
+      const tipN = Math.min(4, parts.length);
+      for (let k = 0; k < tipN; k++) {
+        // k = 0 is the freed tip; recoil points AWAY from the cut, along the
+        // local chain tangent, fading toward the anchored end.
+        const idx = fromStart ? k : parts.length - 1 - k;
+        const nxt = fromStart ? Math.min(idx + 1, parts.length - 1) : Math.max(idx - 1, 0);
+        const p = parts[idx], q = parts[nxt];
+        if (p === q || !ps.alive[p] || !ps.alive[q]) continue;
+        let tx = ps.x[q] - ps.x[p], ty = ps.y[q] - ps.y[p];
+        const tl = Math.hypot(tx, ty);
+        if (tl < 1e-6) continue;
+        tx /= tl; ty /= tl;
+        const v = 220 - (220 - 60) * (k / 3);
+        ps.vx[p] += tx * v;
+        ps.vy[p] += ty * v;
+        const sp = Math.hypot(ps.vx[p], ps.vy[p]);
+        if (sp > 250) { const f = 250 / sp; ps.vx[p] *= f; ps.vy[p] *= f; }
+      }
+      snapshots.push(parts.filter(i => ps.alive[i]).map(i => ({ x: ps.x[i], y: ps.y[i] })));
+    }
+    if (snapshots.length) this.effects.spawnWhip(snapshots);
+  }
 }

@@ -23,7 +23,39 @@ export const COLORS = {
   cut: '#ff5c5c',
   glue: '#66a3ff',
   weld: '#8fb7ff',
+  highlight: '#e0fff5',               // wet-sheen / interior-light tint (224,255,245)
+  body3d: '#38967d',                  // 3D face ramp base (56,150,125)
 };
+
+// Pristine (lab) palette snapshot: applyPalette always starts from this, so a
+// theme switch back to lab restores every value bit-exactly.
+const DEFAULT_COLORS = Object.freeze({ ...COLORS });
+
+/** '#rrggbb' | 'rgb(...)' | 'rgba(...)' -> [r,g,b] (ints). */
+function parseRgb(str) {
+  const hex = /^#([0-9a-f]{6})$/i.exec(str);
+  if (hex) {
+    const v = parseInt(hex[1], 16);
+    return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
+  }
+  const m = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(str);
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : [255, 255, 255];
+}
+
+/** Alpha component of an rgba() string, kept as its RAW source text so the
+ *  rebuilt colour strings stay byte-identical to the hand-written originals. */
+function parseAlphaRaw(str, fallback = '1') {
+  const m = /,\s*([\d.]+)\s*\)\s*$/.exec(str);
+  return m ? m[1] : fallback;
+}
+
+/** Override the palette (theme layer). Starts from the lab defaults, assigns
+ *  the overrides, then rebuilds every colour-derived quantized ramp. Calling
+ *  applyPalette({}) restores the exact original (lab) rendering. */
+export function applyPalette(p = {}) {
+  Object.assign(COLORS, DEFAULT_COLORS, p);
+  rebuildRamps();
+}
 
 // Fixed studio light for the wet-highlight pass (unit vector, up-left).
 const LIGHT_X = -0.6, LIGHT_Y = -0.8;
@@ -47,9 +79,6 @@ function makeStrainRamp(base, white, s0, s1) {
   };
 }
 
-// Pipes whiten visibly once stretched past rest (real stress readout).
-const pipeStrainColor = makeStrainRamp([170, 182, 198], [246, 250, 253], 1.02, 1.45);
-
 // Deflation desaturation: a body below rest pressure loses colour and gloss.
 // Four QUANTIZED tint steps (pressure >= 1.0 -> pristine, ~0.8 -> about 16%
 // desaturated/darker), all colours precomputed — no per-frame string churn.
@@ -58,16 +87,35 @@ function dimmedRgb([r, g, b], f) {
   const d = c => Math.round((c + (gray - c) * f) * (1 - f));
   return [d(r), d(g), d(b)];
 }
-const PRESSURE_TINTS = [0, 1, 2, 3].map(i => {
-  const f = (i / 3) * 0.16;
-  const [fr, fg, fb] = dimmedRgb([56, 116, 98], f);
-  return {
-    fill: `rgba(${fr},${fg},${fb},0.60)`,
-    // Boundary membrane whitens under tension (silicone stress-whitening);
-    // its base colour dims with the island's pressure tint.
-    edgeRamp: makeStrainRamp(dimmedRgb([126, 224, 195], f), [242, 255, 250], 1.01, 1.12),
-  };
-});
+
+// Colour-derived quantized ramps. Built from the live COLORS values (rebuilt
+// on every applyPalette); the initial build reproduces the original literals
+// exactly: pipe #aab6c6=[170,182,198], bodyFill=[56,116,98], stroke
+// #7ee0c3=[126,224,195], highlight #e0fff5=[224,255,245].
+let pipeStrainColor;   // pipes whiten visibly once stretched past rest
+let PRESSURE_TINTS;    // per-pressure-step matrix fill + boundary edge ramp
+let HIGHLIGHT_RGB;     // 'r,g,b' string for the wet sheen / interior light
+let HIGHLIGHT_CACHE;   // quantized rgba() strings, keyed on alpha step
+
+function rebuildRamps() {
+  pipeStrainColor = makeStrainRamp(parseRgb(COLORS.pipe), [246, 250, 253], 1.02, 1.45);
+  const bodyBase = parseRgb(COLORS.bodyFill);
+  const bodyAlpha = parseAlphaRaw(COLORS.bodyFill, '0.60');
+  const edgeBase = parseRgb(COLORS.bodyStroke);
+  PRESSURE_TINTS = [0, 1, 2, 3].map(i => {
+    const f = (i / 3) * 0.16;
+    const [fr, fg, fb] = dimmedRgb(bodyBase, f);
+    return {
+      fill: `rgba(${fr},${fg},${fb},${bodyAlpha})`,
+      // Boundary membrane whitens under tension (stress-whitening); its base
+      // colour dims with the island's pressure tint.
+      edgeRamp: makeStrainRamp(dimmedRgb(edgeBase, f), [242, 255, 250], 1.01, 1.12),
+    };
+  });
+  HIGHLIGHT_RGB = parseRgb(COLORS.highlight).join(',');
+  HIGHLIGHT_CACHE = [];
+}
+rebuildRamps();
 function pressureTint(p) {
   if (!(p < 1.0)) return PRESSURE_TINTS[0]; // covers >=1, undefined, NaN
   const t = Math.min(1, (1.0 - p) / 0.2);
@@ -282,9 +330,9 @@ function drawInteriorLight(ctx, island) {
   const lx = cx + LIGHT_X * 0.25 * R, ly = cy + LIGHT_Y * 0.25 * R;
   const A = 0.09 * poolGloss;
   const grad = ctx.createRadialGradient(lx, ly, 0, lx, ly, R);
-  grad.addColorStop(0, `rgba(224,255,245,${A.toFixed(3)})`);
-  grad.addColorStop(0.55, `rgba(224,255,245,${(A * 0.35).toFixed(3)})`);
-  grad.addColorStop(1, 'rgba(224,255,245,0)');
+  grad.addColorStop(0, `rgba(${HIGHLIGHT_RGB},${A.toFixed(3)})`);
+  grad.addColorStop(0.55, `rgba(${HIGHLIGHT_RGB},${(A * 0.35).toFixed(3)})`);
+  grad.addColorStop(1, `rgba(${HIGHLIGHT_RGB},0)`);
   tracePoly(ctx, pts);
   ctx.fillStyle = grad;
   ctx.fill();
@@ -366,10 +414,9 @@ function drawWrinkles(ctx, a, b, k, s, inw) {
  *  fades as the island deflates (a slack membrane loses its gloss): below
  *  rest pressure the alpha is linearly cut down to x0.5 at p<=0.8.
  *  Colour strings come from a quantized cache — zero per-frame churn. */
-const HIGHLIGHT_CACHE = [];
 function highlightColor(alpha) {
   const q = Math.max(0, Math.min(60, Math.round(alpha * 100)));
-  return HIGHLIGHT_CACHE[q] ?? (HIGHLIGHT_CACHE[q] = `rgba(224,255,245,${(q / 100).toFixed(2)})`);
+  return HIGHLIGHT_CACHE[q] ?? (HIGHLIGHT_CACHE[q] = `rgba(${HIGHLIGHT_RGB},${(q / 100).toFixed(2)})`);
 }
 function drawWetHighlight(ctx, island, inw, pressure) {
   const pts = island.points, n = pts.length;

@@ -10,6 +10,7 @@ import { TargetSpec, evaluate, inverseTransform } from '../engine/similarity2d.j
 import { pointInPolygon } from '../engine/geom.js';
 import { drawScene } from '../render/render2d.js';
 import { Effects } from '../render/effects.js';
+import { themeFx } from './themes.js';
 
 export const MAX_CONTROLS = 3;   // grabs + pins combined (game rule)
 const GRAB_RADIUS = 34;
@@ -52,7 +53,16 @@ export class Session2D {
       if (this.ps.alive[i]) this.restPose.set(i, { x: this.ps.x[i], y: this.ps.y[i] });
     }
 
-    this.effects = new Effects();
+    // Theme fx (session layer only). In Node tests themeFx() safely resolves
+    // to the lab defaults: pulse=false (the pulse code below never runs) and
+    // reference particle styles — behaviour is bit-identical to pre-theme.
+    const fx = themeFx();
+    this.effects = new Effects(fx);
+    // Bio theme heartbeat: a gentle sinusoidal modulation of each island's
+    // pressure target. pulseT is the shared phase clock (game.js syncs the
+    // ambient thump to it).
+    this.pulse = !!fx.pulse;
+    this.pulseT = 0;
     this.grabs = new Map();   // pointerId -> {anchor, particle}
     this.pins = new Set();    // particle indices
     // Cable-guide groove state (containPipes): seated particles and
@@ -121,6 +131,10 @@ export class Session2D {
 
   step(dt) {
     this.t += dt;
+    // Bio pulse bookkeeping: restore the RAW (unmodulated) pressure targets
+    // before physics, so the engine's pressureSlew always integrates on the
+    // clean value and the modulation never compounds frame over frame.
+    if (this.pulse) this.unpulse();
     // Fixed timestep with an accumulator; cap catch-up to avoid death spirals.
     this.accumulator = Math.min(this.accumulator + dt, 3 / 60);
     while (this.accumulator >= 1 / 60 - 1e-9) {
@@ -128,6 +142,7 @@ export class Session2D {
       this.body.update();
       this.accumulator -= 1 / 60;
     }
+    if (this.pulse) this.applyPulse(dt);
     // Drop controls whose particles died in a cut.
     for (const [id, g] of [...this.grabs]) {
       g.anchors = g.anchors.filter(a => {
@@ -171,6 +186,34 @@ export class Session2D {
       }
     }
     this.containPipes();
+  }
+
+  /** Bio pulse, part 1: undo last frame's modulation so the slew/goal logic
+   *  in the engine only ever sees the clean target value. Session layer only
+   *  — reads/writes areaC.targetArea exactly like the workbench code does. */
+  unpulse() {
+    for (const island of this.body.islands) {
+      if (island._rawTarget == null || !island.areaC) continue;
+      island.areaC.targetArea = island._rawTarget;
+      island._rawTarget = null;
+    }
+  }
+
+  /** Bio pulse, part 2: multiply the slewed pressure target of every live
+   *  island by 1 + 1.8%·sin(2π·1.15Hz·t). The amplitude dies as the island's
+   *  pressure goal falls below its rest area (goal/rest 0.95 -> 0.90 fades
+   *  1 -> 0): a bled-out chamber stops beating — the core feedback. */
+  applyPulse(dt) {
+    this.pulseT += dt;
+    const s = Math.sin(2 * Math.PI * 1.15 * this.pulseT) * 0.018;
+    for (const island of this.body.aliveIslands()) {
+      if (!island.areaC || island.baseRestArea <= 1e-9) continue;
+      const rel = (island.pressureGoal ?? island.areaC.targetArea) / island.baseRestArea;
+      const fade = Math.max(0, Math.min(1, (rel - 0.90) / 0.05));
+      if (fade <= 0) continue;
+      island._rawTarget = island.areaC.targetArea;
+      island.areaC.targetArea = island._rawTarget * (1 + s * fade);
+    }
   }
 
   /** Cable-guide grooves ("导缆槽") of the casting fixture: a pipe particle

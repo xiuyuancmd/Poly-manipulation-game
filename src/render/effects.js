@@ -23,7 +23,18 @@ function makeRng(seed) {
 }
 
 export class Effects {
-  constructor() {
+  /** `style` is injected by the session layer (theme fx). Defaults reproduce
+   *  the reference (lab) behaviour exactly, so `new Effects()` — the form
+   *  every Node test uses — is bit-identical to the pre-theme system.
+   *    deflateStyle: 'air' (bright streaks) | 'fluid' (dark red falling drops)
+   *    debrisStyle:  'ceramic' (pale grey/cyan) | 'calcified' (bone white)
+   *    rejectLabel:  caption at a refused blade start */
+  constructor(style = {}) {
+    this.style = {
+      deflateStyle: style.deflateStyle ?? 'air',
+      debrisStyle: style.debrisStyle ?? 'ceramic',
+      rejectLabel: style.rejectLabel ?? '只能从外部下刀',
+    };
     this.sparks = [];    // {x,y,vx,vy,age,life,size,color,drag}
     this.scratches = []; // {x0,y0,x1,y1,age,life}
     this.labels = [];    // {x,y,text,age,life}
@@ -64,10 +75,25 @@ export class Effects {
     this.emitters.push({ x, y, base, rng, age: 0, life: 0.45, rate: 150, carry: 0 });
   }
 
-  /** One escaping-air particle in a ±0.45 rad cone around `base`. */
+  /** One escaping particle in a ±0.45 rad cone around `base`. Air (lab): a
+   *  bright fast streak. Fluid (bio): a dark red droplet — round 2.5 px dot,
+   *  no motion trail, pulled down by 400 px/s² gravity. Same lifetimes. */
   jetSpark(x, y, base, rng) {
     const ang = base + (rng() - 0.5) * 0.9;
     const sp = 130 + rng() * 160; // 130–290 px/s
+    if (this.style.deflateStyle === 'fluid') {
+      this.sparks.push({
+        x, y,
+        vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
+        age: 0, life: 0.3 + rng() * 0.35, // <= 0.65 s
+        size: 2.5,
+        color: rng() < 0.5 ? 'rgb(150,32,42)' : 'rgb(122,20,30)',
+        drag: 1.4,
+        ay: 400,
+        dot: true,
+      });
+      return;
+    }
     this.sparks.push({
       x, y,
       vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
@@ -94,6 +120,7 @@ export class Effects {
    *  there, the second contact snuffs the shard. Dead within 0.65 s. */
   spawnDebris(x, y) {
     const rng = makeRng(this.seed(x, y));
+    const calcified = this.style.debrisStyle === 'calcified';
     const n = 14 + Math.floor(rng() * 5);
     for (let i = 0; i < n; i++) {
       const ang = rng() * TAU;
@@ -103,7 +130,10 @@ export class Effects {
         vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
         age: 0, life: 0.35 + rng() * 0.3,
         size: 1.4 + rng() * 1.8,
-        color: rng() < 0.5 ? 'rgb(226,234,236)' : 'rgb(188,226,222)',
+        // ceramic: pale grey / faint cyan. calcified (bio): bone white shards.
+        color: calcified
+          ? (rng() < 0.5 ? 'rgb(238,230,210)' : 'rgb(228,218,196)')
+          : (rng() < 0.5 ? 'rgb(226,234,236)' : 'rgb(188,226,222)'),
         w: 1.4 + rng() * 1.8, // seeded stroke width, 1.4–3.2 px
         drag: 1.6,
         ay: 600,
@@ -144,7 +174,7 @@ export class Effects {
       y1: y0 + (dy / len) * l,
       age: 0, life: 0.5,
     });
-    this.labels.push({ x: x0 + 14, y: y0 - 14, text: '只能从外部下刀', age: 0, life: 1.05 });
+    this.labels.push({ x: x0 + 14, y: y0 - 14, text: this.style.rejectLabel, age: 0, life: 1.05 });
   }
 
   update(dt) {
@@ -194,8 +224,16 @@ export class Effects {
     // Sparks as short motion-trail segments, read as streaks not dots.
     // Per-particle stroke width when seeded at spawn; 2 px otherwise (the
     // pressure-jet particles carry no `w` and keep their reference look).
+    // Fluid droplets (bio deflate) are trail-less round dots instead.
     for (const p of this.sparks) {
       ctx.globalAlpha = Math.max(0, (1 - p.age / p.life) * 0.85);
+      if (p.dot) {
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size, 0, TAU);
+        ctx.fill();
+        continue;
+      }
       ctx.strokeStyle = p.color;
       ctx.lineWidth = p.w ?? 2;
       ctx.beginPath();

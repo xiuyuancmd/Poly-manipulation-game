@@ -80,24 +80,15 @@ function edgeRestMap(body) {
 }
 
 // 24-step quantized whitening ramps — LOCAL copies (render2d's exports stay
-// untouched). Faces whiten from the matrix green; a face's strain is the mean
-// current/rest ratio of its three edges, whitening from +3% stretch.
+// untouched). Faces whiten from the matrix base colour; a face's strain is the
+// mean current/rest ratio of its three edges, whitening from +3% stretch.
 const FACE_N = 24;
-const FACE_WHITE = [];
-for (let i = 0; i <= FACE_N; i++) {
-  const f = i / FACE_N;
-  FACE_WHITE.push([
-    56 + (245 - 56) * f,
-    150 + (255 - 150) * f,
-    125 + (242 - 125) * f,
-  ]);
-}
 function faceWhiteStep(strain) {
   const t = Math.min(1, Math.max(0, (strain - 1.02) / 0.17));
   return Math.round(t * FACE_N);
 }
 
-// Pipe segments whiten from steel grey under real stretch (same visual
+// Pipe segments whiten from their base colour under real stretch (same visual
 // language as the 2D pipes); colour strings are cached per quantized step.
 function makeStrainRamp(base, white, s0, s1) {
   const N = 24;
@@ -114,12 +105,55 @@ function makeStrainRamp(base, white, s0, s1) {
     return cache[b];
   };
 }
-const pipeStrainColor3D = makeStrainRamp([170, 182, 198], [246, 250, 253], 1.02, 1.35);
+
+/** '#rrggbb' | 'rgb(a)(...)' -> [r,g,b]. */
+function parseRgb(str) {
+  const hex = /^#([0-9a-f]{6})$/i.exec(str);
+  if (hex) {
+    const v = parseInt(hex[1], 16);
+    return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
+  }
+  const m = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(str);
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : [255, 255, 255];
+}
+
+// Palette-derived 3D ramps, rebuilt whenever the theme palette changes the
+// source COLORS. Initial (lab) values are identical to the previous literals:
+// body3d #38967d=[56,150,125], pipe #aab6c6=[170,182,198],
+// bodyStroke #7ee0c3 -> 'rgba(126,224,195,0.18)', casing -> 'rgba(15,22,27,0.55)'.
+let RAMPS3D = null;
+let rampsKey = '';
+function ramps3d() {
+  const key = `${COLORS.body3d}|${COLORS.pipe}|${COLORS.bodyStroke}|${COLORS.pipeCasing}`;
+  if (!RAMPS3D || rampsKey !== key) {
+    rampsKey = key;
+    const [br, bg, bb] = parseRgb(COLORS.body3d);
+    const faceWhite = [];
+    for (let i = 0; i <= FACE_N; i++) {
+      const f = i / FACE_N;
+      faceWhite.push([
+        br + (245 - br) * f,
+        bg + (255 - bg) * f,
+        bb + (242 - bb) * f,
+      ]);
+    }
+    const [er, eg, eb] = parseRgb(COLORS.bodyStroke);
+    const [cr, cg, cb] = parseRgb(COLORS.pipeCasing);
+    RAMPS3D = {
+      faceWhite,
+      pipeStrainColor: makeStrainRamp(parseRgb(COLORS.pipe), [246, 250, 253], 1.02, 1.35),
+      faceStroke: `rgba(${er},${eg},${eb},0.18)`,
+      pipeCasing: `rgba(${cr},${cg},${cb},0.55)`,
+    };
+  }
+  return RAMPS3D;
+}
 
 export function drawScene3D(ctx, session, view = {}) {
   const { canvas } = ctx;
   const cam = session.camera;
   const { ps, body } = session;
+  const theme = ramps3d();
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = COLORS.bg;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -187,10 +221,10 @@ export function drawScene3D(ctx, session, view = {}) {
     ctx.lineTo(f.pb.sx, f.pb.sy);
     ctx.lineTo(f.pc.sx, f.pc.sy);
     ctx.closePath();
-    const [br, bg, bb] = FACE_WHITE[f.white];
+    const [br, bg, bb] = theme.faceWhite[f.white];
     ctx.fillStyle = `rgba(${Math.round(br * f.shade)}, ${Math.round(bg * f.shade)}, ${Math.round(bb * f.shade)}, 0.94)`;
     ctx.fill();
-    ctx.strokeStyle = 'rgba(126,224,195,0.18)';
+    ctx.strokeStyle = theme.faceStroke;
     ctx.lineWidth = 0.7;
     ctx.stroke();
   }
@@ -204,7 +238,7 @@ export function drawScene3D(ctx, session, view = {}) {
     if (!pipe.alive) continue;
     const proj = pipe.parts.map(i =>
       ps.alive[i] ? cam.project(ps.x[i], ps.y[i], ps.z[i], basis) : null);
-    ctx.strokeStyle = 'rgba(15,22,27,0.55)';
+    ctx.strokeStyle = theme.pipeCasing;
     ctx.lineWidth = 6.5;
     ctx.beginPath();
     let started = false;
@@ -218,7 +252,7 @@ export function drawScene3D(ctx, session, view = {}) {
     for (let k = 0; k < pipe.segCs.length; k++) {
       const pa = proj[k], pb = proj[k + 1];
       if (!pa || !pb) continue;
-      ctx.strokeStyle = pipeStrainColor3D(pipe.segCs[k].c.currentStrain(ps));
+      ctx.strokeStyle = theme.pipeStrainColor(pipe.segCs[k].c.currentStrain(ps));
       ctx.beginPath();
       ctx.moveTo(pa.sx, pa.sy);
       ctx.lineTo(pb.sx, pb.sy);

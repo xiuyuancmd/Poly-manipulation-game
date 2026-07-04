@@ -5,6 +5,7 @@
 import { drawTargetPreview } from '../render/render2d.js';
 import { drawTargetPreview3D } from '../render/render3d.js';
 import { dialFrac } from './dial.js';
+import { THEMES } from '../game/themes.js';
 
 const RING_R = 40;
 const RING_C = 2 * Math.PI * RING_R;
@@ -41,7 +42,7 @@ export class HUD {
           </div>
           <div class="bars">
             <div class="bar-row"><span>外形</span><div class="bar"><div id="bar-outline"></div><div id="mark-outline" class="mark"></div></div></div>
-            <div class="bar-row"><span>管道</span><div class="bar"><div id="bar-pipes"></div></div></div>
+            <div class="bar-row"><span id="bar-pipes-label">管道</span><div class="bar"><div id="bar-pipes"></div></div></div>
           </div>
           <div id="cutoff-label"></div>
           <div id="topo-warn" class="hidden">⚠ 管路结构不符 · 读数被压至 25%</div>
@@ -56,10 +57,11 @@ export class HUD {
         <div id="toast" class="hidden"></div>
         <div id="banner" class="hidden"></div>
         <div id="menu" class="overlay">
-          <h1>形变工坊 <small>PolyForm</small></h1>
-          <p class="tagline">拉扯、切割、粘合一块物性未知的工程软材料——内部管路的材质，要靠你亲手试出来。</p>
+          <h1 id="menu-title">形变工坊 <small>PolyForm</small></h1>
+          <p class="tagline" id="menu-tagline">拉扯、切割、粘合一块物性未知的工程软材料——内部管路的材质，要靠你亲手试出来。</p>
+          <button id="btn-theme" title="切换主题（表现层：文案/配色/音效，玩法与判定不变）"></button>
           <div id="level-grid"></div>
-          <p class="help">操作：拖拽=抓取（最多 3 个控制点）· 双击=钉住/解除 · 切割须从软体外下刀 · 相似度达标并保持 3 秒即完成目标</p>
+          <p class="help" id="menu-help">操作：拖拽=抓取（最多 3 个控制点）· 双击=钉住/解除 · 切割须从软体外下刀 · 相似度达标并保持 3 秒即完成目标</p>
         </div>
         <div id="result" class="overlay hidden">
           <h2 id="result-title"></h2>
@@ -84,10 +86,13 @@ export class HUD {
       cutoffLabel: this.$('#cutoff-label'), topoWarn: this.$('#topo-warn'), hint: this.$('#hint-text'),
       controlsChip: this.$('#controls-chip'), toast: this.$('#toast'), banner: this.$('#banner'),
       menu: this.$('#menu'), levelGrid: this.$('#level-grid'),
+      menuTitle: this.$('#menu-title'), menuTagline: this.$('#menu-tagline'),
+      menuHelp: this.$('#menu-help'), btnTheme: this.$('#btn-theme'),
       result: this.$('#result'), resultTitle: this.$('#result-title'), resultDetail: this.$('#result-detail'),
       btnNext: this.$('#btn-next'),
     };
 
+    this.$('#btn-theme').onclick = () => cb.onTheme?.();
     this.$('#btn-restart').onclick = () => cb.onRestart();
     this.$('#btn-menu').onclick = () => cb.onMenu();
     this.$('#btn-retry').onclick = () => cb.onRestart();
@@ -114,21 +119,43 @@ export class HUD {
     this.els.gauge.classList.add('locked');
   }
 
-  showMenu(levels, progress) {
+  showMenu(levels, progress, theme) {
     this.els.menu.classList.remove('hidden');
     this.els.result.classList.add('hidden');
     for (const el of [this.els.topbar, this.els.sidepanel, this.els.toolbar]) el.classList.add('hidden');
+    if (theme) this.applyTheme(theme);
     this.els.levelGrid.innerHTML = '';
     levels.forEach((lv, i) => {
       const done = progress[lv.id]?.done;
+      const name = theme?.text?.levels?.[lv.id]?.name ?? lv.name;
       const card = document.createElement('button');
       card.className = 'level-card' + (done ? ' done' : '');
       card.innerHTML = `<span class="lv-num">${i + 1}</span>
-        <span class="lv-name">${lv.name}</span>
+        <span class="lv-name">${name}</span>
         <span class="lv-meta">${lv.dim === 3 ? '3D' : '2D'} · ${lv.targets.length} 个目标 · ${Math.round(lv.timeLimit / 60)}min${done ? ' · ✓' : ''}</span>`;
       card.onclick = () => this.cb.onSelectLevel(i);
       this.els.levelGrid.appendChild(card);
     });
+  }
+
+  /** Re-skin every theme-sensitive static string (menu header, theme toggle,
+   *  toolbar labels, topology warning). Lab values reproduce the original
+   *  markup exactly. */
+  applyTheme(theme) {
+    const m = theme.meta;
+    this.els.menuTitle.innerHTML = `${m.title} <small>${m.subtitle}</small>`;
+    this.els.menuTagline.textContent = m.tagline;
+    this.els.menuHelp.textContent = m.help;
+    this.els.btnTheme.innerHTML = '主题：' + Object.values(THEMES)
+      .map(t => `<span class="theme-opt${t.meta.id === m.id ? ' on' : ''}">${t.meta.label}</span>`)
+      .join(' ⇄ ');
+    this.els.topoWarn.textContent =
+      theme.toasts?.topoWarn ?? '⚠ 管路结构不符 · 读数被压至 25%';
+    this.$('#bar-pipes-label').textContent = m.pipesLabel ?? '管道';
+    for (const b of this.els.toolbar.querySelectorAll('.tool')) {
+      const label = m.tools?.[b.dataset.tool];
+      if (label) b.innerHTML = `${label} <kbd>${{ pull: 1, cut: 2, glue: 3 }[b.dataset.tool]}</kbd>`;
+    }
   }
 
   showGame(levelName) {
@@ -145,9 +172,10 @@ export class HUD {
     this.els.timer.classList.toggle('urgent', secondsLeft < 30);
   }
 
-  setTarget(index, total, spec, cutoff) {
+  setTarget(index, total, spec, cutoff, nameOverride) {
     this.els.progress.textContent = `目标 ${index + 1}/${total}`;
-    this.els.targetName.textContent = spec.name ? `「${spec.name}」` : '';
+    const name = nameOverride ?? spec.name;
+    this.els.targetName.textContent = name ? `「${name}」` : '';
     this.els.cutoffLabel.textContent = `达标线 ${cutoff} · 保持 3 秒`;
     // Cutoff tick on the score dial: same dialFrac mapping as the arc, so the
     // arc tip crosses the tick on exactly the frame the score crosses cutoff.

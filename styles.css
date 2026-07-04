@@ -173,6 +173,19 @@ button:hover { background: #2e3846; }
 .tagline { color: #aab6c6; max-width: 520px; line-height: 1.7; }
 .help { color: #67748a; font-size: 12px; max-width: 560px; line-height: 1.7; }
 
+/* ---- theme toggle (menu) ---- */
+#btn-theme {
+  font-size: 14px;
+  padding: 8px 18px;
+  border-radius: 20px;
+  border: 1px solid #5aa0e8;
+  background: #1c2431;
+  letter-spacing: 0.5px;
+}
+#btn-theme:hover { background: #243042; }
+#btn-theme .theme-opt { color: #67748a; }
+#btn-theme .theme-opt.on { color: #7ee0c3; font-weight: 700; }
+
 #level-grid {
   display: grid; grid-template-columns: repeat(3, 1fr);
   gap: 10px; margin: 8px 0; max-width: 640px;

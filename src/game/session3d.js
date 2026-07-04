@@ -8,6 +8,7 @@ import { TargetSpec3D, evaluate3D } from '../engine/similarity3d.js';
 import { Camera3D, drawScene3D } from '../render/render3d.js';
 import { Effects } from '../render/effects.js';
 import { MAX_CONTROLS } from './session2d.js';
+import { themeFx } from './themes.js';
 
 const PICK_RADIUS = 22;   // px
 const GRIP_SPREAD = 48;   // world units, soft-hand radius
@@ -31,7 +32,8 @@ export class Session3D {
     // Screen-space effect particles (fracture sparks at pipe cuts). The 3D
     // pipeCut event carries no coordinates, so the cut branch projects the
     // severed segment's midpoint itself and feeds Effects directly.
-    this.effects = new Effects();
+    // Theme fx style injected here (no pulse in 3D levels by design).
+    this.effects = new Effects(themeFx());
     this.grabs = new Map();   // pointerId -> {vertex, anchors:[{c,ox,oy,oz}], plane}
     this.pins = new Set();
     this.orbit = null;

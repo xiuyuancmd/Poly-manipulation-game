@@ -80,6 +80,15 @@ const safe = (fn) => () => {
   try { fn(c, c.currentTime); } catch { /* audio must never break the game */ }
 };
 
+// Active timbre set, switched by the theme layer ('industrial' | 'organic').
+// Pure metadata: the game layer maps events to sfx names per theme; this flag
+// just records the choice (and lets future callers query it).
+let sfxStyle = 'industrial';
+export function setSfxStyle(style) {
+  sfxStyle = style === 'organic' ? 'organic' : 'industrial';
+}
+export function getSfxStyle() { return sfxStyle; }
+
 export const sfx = {
   /** Air escaping a punctured pressure loop: bandpassed noise, 0.6 s decay. */
   hiss: safe((c, t) => noiseBurst(c, t, { type: 'bandpass', freq: 3200, q: 0.8, vol: 0.5, dur: 0.6 })),
@@ -104,4 +113,30 @@ export const sfx = {
 
   /** Blade refused (knife must start outside): dull low tick. */
   thud: safe((c, t) => tone(c, t, { f0: 110, f1: 68, vol: 0.4, dur: 0.09, lp: 300 })),
+
+  // ---- organic timbre set (bio theme) ---------------------------------------
+
+  /** Fingers sinking into wet tissue: low wet puff, ~250 ms. */
+  squish: safe((c, t) => {
+    noiseBurst(c, t, { type: 'lowpass', freq: 340, q: 0.7, vol: 0.30, dur: 0.25 });
+    tone(c, t, { f0: 150, f1: 82, vol: 0.16, dur: 0.18, lp: 260 });
+  }),
+
+  /** Scalpel through a vessel: two soft wet clicks, duller than snip. */
+  wetSnip: safe((c, t) => {
+    noiseBurst(c, t, { type: 'bandpass', freq: 900, q: 1.2, vol: 0.5, dur: 0.04 });
+    noiseBurst(c, t + 0.06, { type: 'lowpass', freq: 500, vol: 0.4, dur: 0.12 });
+  }),
+
+  /** Bleed-out of a punctured chamber: low-passed noise gush, 0.5 s. */
+  bloodSpurt: safe((c, t) => {
+    noiseBurst(c, t, { type: 'lowpass', freq: 620, q: 0.6, vol: 0.5, dur: 0.5 });
+    tone(c, t, { f0: 120, f1: 60, vol: 0.14, dur: 0.35, lp: 240 });
+  }),
+
+  /** Heartbeat: quiet low-frequency double thump (lub-dub), 60-80 ms hits. */
+  thump: safe((c, t) => {
+    tone(c, t, { f0: 88, f1: 50, vol: 0.10, dur: 0.07, lp: 160 });
+    tone(c, t + 0.12, { f0: 74, f1: 46, vol: 0.075, dur: 0.06, lp: 150 });
+  }),
 };

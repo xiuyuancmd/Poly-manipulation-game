@@ -3,7 +3,7 @@
   "startedAt": "2026-07-04T22:05:00Z",
   "deadline": "2026-07-05T02:05:00Z",
   "iteration": 1,
-  "phase": "planner",
+  "phase": "generator",
   "rubricHistory": [],
   "notes": "第二期：生物版物理真实感。材质档案架构，lab 逐位不变。"
 }

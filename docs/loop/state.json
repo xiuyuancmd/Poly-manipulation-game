@@ -1,9 +1,9 @@
 {
-  "status": "running",
+  "status": "done",
   "startedAt": "2026-07-04T09:40:28Z",
   "deadline": "2026-07-04T21:40:28Z",
   "iteration": 5,
-  "phase": "evaluator",
+  "phase": "finished",
   "rubricHistory": [
     {
       "iteration": 1,
@@ -40,7 +40,18 @@
       "引导清晰度": 8.5,
       "惊喜时刻": 8,
       "红线": "通过"
+    },
+    {
+      "iteration": 5,
+      "材质可信度": 8.5,
+      "力学连贯性": 9,
+      "操作手感": 8.5,
+      "引导清晰度": 9,
+      "惊喜时刻": 8.5,
+      "红线": "通过",
+      "终止条件": "五项全 ≥8.5，达成"
     }
   ],
-  "notes": "推送被 GitHub 写权限 403 阻塞（已知），每轮重试。"
+  "notes": "推送被 GitHub 写权限 403 阻塞（已知），每轮重试。",
+  "finishedAt": "2026-07-04T14:30:00Z"
 }

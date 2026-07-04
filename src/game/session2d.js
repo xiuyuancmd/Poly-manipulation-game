@@ -8,6 +8,7 @@ import { performCut } from '../engine/cut2d.js';
 import { selectStretch, weldStretches } from '../engine/glue2d.js';
 import { TargetSpec, evaluate, inverseTransform } from '../engine/similarity2d.js';
 import { drawScene } from '../render/render2d.js';
+import { Effects } from '../render/effects.js';
 
 export const MAX_CONTROLS = 3;   // grabs + pins combined (game rule)
 const GRAB_RADIUS = 34;
@@ -18,10 +19,24 @@ export class Session2D {
     this.def = def;
     this.ps = new ParticleSystem();
     this.solver = new Solver(this.ps);
-    this.body = SoftBody2D.build(this.ps, this.solver, { ...def.body, pipes: def.pipes ?? [] });
+    // pressureSlew: live games ease runtime pressure changes over ~0.4 s so a
+    // punctured loop audibly AND visibly collapses instead of teleporting.
+    // (The raw engine default stays instant — deterministic tests untouched.)
+    this.body = SoftBody2D.build(this.ps, this.solver, {
+      ...def.body,
+      pipes: def.pipes ?? [],
+      pressureSlew: def.body.pressureSlew ?? 0.04,
+    });
     this.body.settle(150);
     this.body.drainEvents();
 
+    // Workbench datum: where the clamped specimen rests. Drives the idle
+    // re-centering in step() and the clamp-frame renderer.
+    const rest = this.measureBody();
+    this.anchor = { x: rest.cx, y: rest.cy };
+    this.restBBox = rest.bbox;
+
+    this.effects = new Effects();
     this.grabs = new Map();   // pointerId -> {anchor, particle}
     this.pins = new Set();    // particle indices
     this.cutDrag = null;      // {x0,y0,x1,y1}
@@ -53,7 +68,31 @@ export class Session2D {
       cutDrag: this.cutDrag,
       glueSel: this.glueSel,
       gluePos: this.gluePos,
+      effects: this.effects,
+      anchor: this.anchor,
+      restBBox: this.restBBox,
     });
+  }
+
+  /** Centre of mass + bounding box over the live owned particles. */
+  measureBody() {
+    const { ps } = this;
+    let cx = 0, cy = 0, n = 0;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const i of this.body.owned) {
+      if (!ps.alive[i]) continue;
+      cx += ps.x[i]; cy += ps.y[i]; n++;
+      if (ps.x[i] < minX) minX = ps.x[i];
+      if (ps.x[i] > maxX) maxX = ps.x[i];
+      if (ps.y[i] < minY) minY = ps.y[i];
+      if (ps.y[i] > maxY) maxY = ps.y[i];
+    }
+    return {
+      cx: n ? cx / n : 0,
+      cy: n ? cy / n : 0,
+      n,
+      bbox: { minX, minY, maxX, maxY },
+    };
   }
 
   controlCount() { return this.grabs.size + this.pins.size; }
@@ -76,6 +115,28 @@ export class Session2D {
       if (g.anchors.length === 0) this.grabs.delete(id);
     }
     for (const i of [...this.pins]) if (!this.ps.alive[i]) this.pins.delete(i);
+    this.effects.update(dt);
+    // Workbench anchoring: with no live controls, ease the specimen back to
+    // its clamped rest position (max 90 px/s). A UNIFORM translation of x/y
+    // AND px/py leaves every constraint residual and velocity untouched, and
+    // similarity is translation-invariant — physically and score-wise inert.
+    if (this.grabs.size === 0 && this.pins.size === 0 && this.anchor) {
+      const m = this.measureBody();
+      if (m.n > 0) {
+        const dx = this.anchor.x - m.cx, dy = this.anchor.y - m.cy;
+        const d = Math.hypot(dx, dy);
+        if (d > 0.5) {
+          const s = Math.min(d, 90 * dt) / d;
+          const mx = dx * s, my = dy * s;
+          const { ps } = this;
+          for (const i of this.body.owned) {
+            if (!ps.alive[i]) continue;
+            ps.x[i] += mx; ps.y[i] += my;
+            ps.px[i] += mx; ps.py[i] += my;
+          }
+        }
+      }
+    }
   }
 
   /** Player state snapshot for the similarity engine. */

@@ -49,8 +49,30 @@ function makeStrainRamp(base, white, s0, s1) {
 
 // Pipes whiten visibly once stretched past rest (real stress readout).
 const pipeStrainColor = makeStrainRamp([170, 182, 198], [246, 250, 253], 1.02, 1.45);
-// Boundary membrane whitens under tension (silicone stress-whitening).
-const edgeStrainColor = makeStrainRamp([126, 224, 195], [242, 255, 250], 1.01, 1.12);
+
+// Deflation desaturation: a body below rest pressure loses a little colour and
+// gloss. Four QUANTIZED tint steps (pressure >= 1.0 -> pristine, ~0.8 -> about
+// 8% desaturated/darker), all colours precomputed — no per-frame string churn.
+function dimmedRgb([r, g, b], f) {
+  const gray = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  const d = c => Math.round((c + (gray - c) * f) * (1 - f));
+  return [d(r), d(g), d(b)];
+}
+const PRESSURE_TINTS = [0, 1, 2, 3].map(i => {
+  const f = (i / 3) * 0.08;
+  const [fr, fg, fb] = dimmedRgb([56, 116, 98], f);
+  return {
+    fill: `rgba(${fr},${fg},${fb},0.60)`,
+    // Boundary membrane whitens under tension (silicone stress-whitening);
+    // its base colour dims with the island's pressure tint.
+    edgeRamp: makeStrainRamp(dimmedRgb([126, 224, 195], f), [242, 255, 250], 1.01, 1.12),
+  };
+});
+function pressureTint(p) {
+  if (!(p < 1.0)) return PRESSURE_TINTS[0]; // covers >=1, undefined, NaN
+  const t = Math.min(1, (1.0 - p) / 0.2);
+  return PRESSURE_TINTS[Math.round(t * 3)];
+}
 
 /** Sign that turns a 90-degree rotation of an edge direction into the INWARD
  *  normal for this ring (+1: ring has positive signed area). */
@@ -69,11 +91,44 @@ export function drawScene(ctx, session, view = {}) {
   ctx.fillStyle = COLORS.bg;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   drawGrid(ctx);
+  if (view.restBBox) drawClampFrame(ctx, view.restBBox, view.anchor);
   if (view.ghost) drawGhost(ctx, view.ghost);
   drawBody(ctx, session);
   drawControls(ctx, session);
   if (view.cutDrag) drawCutLine(ctx, view.cutDrag);
   if (view.glueSel) drawGlueSelection(ctx, session, view.glueSel, view.gluePos);
+  view.effects?.draw(ctx);
+}
+
+/** Static workbench fixture around the specimen's rest pose: four corner
+ *  clamp claws 14 px outside the rest bounding box plus a crosshair datum at
+ *  the rest centroid. Steel grey, zero animation — pure bench dressing that
+ *  also explains WHY the piece drifts back when released. */
+function drawClampFrame(ctx, bbox, anchor) {
+  const M = 14, L = 20;
+  const x0 = bbox.minX - M, y0 = bbox.minY - M;
+  const x1 = bbox.maxX + M, y1 = bbox.maxY + M;
+  ctx.save();
+  ctx.strokeStyle = 'rgba(170,182,198,0.28)';
+  ctx.lineWidth = 3;
+  ctx.lineCap = 'butt';
+  ctx.beginPath();
+  ctx.moveTo(x0, y0 + L); ctx.lineTo(x0, y0); ctx.lineTo(x0 + L, y0);
+  ctx.moveTo(x1 - L, y0); ctx.lineTo(x1, y0); ctx.lineTo(x1, y0 + L);
+  ctx.moveTo(x1, y1 - L); ctx.lineTo(x1, y1); ctx.lineTo(x1 - L, y1);
+  ctx.moveTo(x0 + L, y1); ctx.lineTo(x0, y1); ctx.lineTo(x0, y1 - L);
+  ctx.stroke();
+  if (anchor) {
+    const r = 9, g = 3;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(anchor.x - r, anchor.y); ctx.lineTo(anchor.x - g, anchor.y);
+    ctx.moveTo(anchor.x + g, anchor.y); ctx.lineTo(anchor.x + r, anchor.y);
+    ctx.moveTo(anchor.x, anchor.y - r); ctx.lineTo(anchor.x, anchor.y - g);
+    ctx.moveTo(anchor.x, anchor.y + g); ctx.lineTo(anchor.x, anchor.y + r);
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 function drawGrid(ctx) {
@@ -115,10 +170,10 @@ function drawBody(ctx, session) {
   const { body, ps } = session;
   const rs = body.renderState();
 
-  // 1 — translucent silicone matrix.
+  // 1 — translucent silicone matrix (tinted down when its island deflates).
   for (const island of rs.islands) {
     tracePoly(ctx, island.points);
-    ctx.fillStyle = COLORS.bodyFill;
+    ctx.fillStyle = pressureTint(island.pressure).fill;
     ctx.fill();
   }
 
@@ -147,7 +202,7 @@ function drawBody(ctx, session) {
   // 4 + 5 — boundary per-edge strokes, wrinkles and wet highlight.
   for (const island of rs.islands) {
     const inw = ringInwardSign(island.points);
-    drawBoundary(ctx, island, inw);
+    drawBoundary(ctx, island, inw, pressureTint(island.pressure).edgeRamp);
     drawWetHighlight(ctx, island, inw);
   }
 
@@ -190,14 +245,14 @@ function drawPipes(ctx, pipes) {
 /** Per-edge boundary: tension whitens the stroke, compression carves short
  *  wrinkle ticks perpendicular to the edge (deterministic phase — no RNG,
  *  so nothing flickers between frames). */
-function drawBoundary(ctx, island, inw) {
+function drawBoundary(ctx, island, inw, edgeRamp) {
   const pts = island.points, n = pts.length;
   ctx.lineCap = 'round';
   ctx.lineWidth = 2.5;
   for (let k = 0; k < n; k++) {
     const a = pts[k], b = pts[(k + 1) % n];
     const s = island.edgeStrains[k] ?? 1;
-    ctx.strokeStyle = edgeStrainColor(s);
+    ctx.strokeStyle = edgeRamp(s);
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
     ctx.lineTo(b.x, b.y);
@@ -213,13 +268,13 @@ function drawWrinkles(ctx, a, b, k, s, inw) {
   const nx = (-dy / len) * inw, ny = (dx / len) * inw; // inward normal
   const depth = Math.min(1, (0.97 - s) / 0.12);
   const count = 2 + (k & 1); // 2 or 3 ticks, phase fixed by edge index
-  ctx.strokeStyle = `rgba(10,26,21,${(0.28 + 0.4 * depth).toFixed(2)})`;
-  ctx.lineWidth = 1.2;
+  ctx.strokeStyle = `rgba(10,26,21,${(0.5 + 0.4 * depth).toFixed(2)})`;
+  ctx.lineWidth = 2.2;
   ctx.beginPath();
   for (let i = 0; i < count; i++) {
     const f = (i + 1) / (count + 1);
     const px = a.x + dx * f, py = a.y + dy * f;
-    const l1 = 2 + 4 + 3 * depth;
+    const l1 = 2 + 4 + 6 * depth;
     ctx.moveTo(px + nx * 2, py + ny * 2);
     ctx.lineTo(px + nx * l1, py + ny * l1);
   }
@@ -269,20 +324,20 @@ function drawGrabDents(ctx, session, islands) {
     const p = g.particle;
     if (!ps.alive[p]) continue;
     const px = ps.x[p], py = ps.y[p];
-    const grad = ctx.createRadialGradient(px, py, 2, px, py, 30);
-    grad.addColorStop(0, 'rgba(5,14,11,0.35)');
-    grad.addColorStop(0.65, 'rgba(5,14,11,0.14)');
+    const grad = ctx.createRadialGradient(px, py, 2, px, py, 42);
+    grad.addColorStop(0, 'rgba(5,14,11,0.60)');
+    grad.addColorStop(0.65, 'rgba(5,14,11,0.24)');
     grad.addColorStop(1, 'rgba(5,14,11,0)');
     ctx.fillStyle = grad;
     ctx.beginPath();
-    ctx.arc(px, py, 30, 0, Math.PI * 2);
+    ctx.arc(px, py, 42, 0, Math.PI * 2);
     ctx.fill();
     // Material piles up on the far side of the pull direction.
     const dx = g.x - px, dy = g.y - py;
     const d = Math.hypot(dx, dy);
     if (d > 4) {
       const ang = Math.atan2(-dy, -dx);
-      ctx.strokeStyle = 'rgba(228,255,246,0.30)';
+      ctx.strokeStyle = 'rgba(228,255,246,0.50)';
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.arc(px, py, 13, ang - 0.85, ang + 0.85);

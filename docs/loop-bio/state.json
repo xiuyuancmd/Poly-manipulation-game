@@ -3,7 +3,7 @@
   "startedAt": "2026-07-04T22:05:00Z",
   "deadline": "2026-07-05T02:05:00Z",
   "iteration": 2,
-  "phase": "planner",
+  "phase": "generator",
   "rubricHistory": [
     {
       "iteration": 1,

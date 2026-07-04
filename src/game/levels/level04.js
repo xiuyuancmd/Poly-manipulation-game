@@ -1,16 +1,16 @@
-// 第 4 关 · 三通阀：三根脾气不同的管子——硬骨头撑形、脆管一拉就断、
-// 气袋鼓着身体。目标序列必须按正确顺序下刀：先泄气但留骨头，最后才剪骨头。
+// 第 4 关 · 三通阀体：三根材质不同的管路——刚性撑杆撑形、脆性导管一拉就断、
+// 气囊鼓着试件。目标序列必须按正确顺序下刀：先泄压但留撑杆，最后才剪撑杆。
 import { ngon, circle, line, arc } from './shapes.js';
 
 const CX = 360, CY = 320;
 
 export default {
   id: 'L4',
-  name: '三通阀',
+  name: '试件 04 · 三通阀体',
   dim: 2,
   timeLimit: 270,
   cutoff: 85,
-  intro: '三根管子，三种脾气。下刀之前，先想想顺序。',
+  intro: '三根管路，三种材质。下刀之前，先想想顺序。',
   body: {
     outline: ngon(CX, CY, 120, 5),
     edgeLen: 16,
@@ -23,7 +23,7 @@ export default {
   ],
   targets: [
     {
-      name: '河豚',
+      name: '满充气罐',
       _expectFactor: 1.3,
       outlines: [circle(CX, CY + 5, 119)],
       pipes: [
@@ -31,7 +31,7 @@ export default {
         { points: line(CX + 5, CY - 5, CX + 68, CY - 68, 5), closed: false },
         { points: circle(CX + 54, CY + 54, 37, 16), closed: true },
       ],
-      hint: '先别切！它鼓着呢，捏圆就好。小心：有根管子很脆。',
+      hint: '先别切！内部气压撑着它，捏圆就好。小心：有根导管很脆。',
       moreHints: [
         { t: 45, text: '把五个角轻轻往里揉圆。动作轻点——猛拉会把脆管拉断。' },
       ],
@@ -49,10 +49,10 @@ export default {
         { points: arc(CX + 52, CY + 52, 33, 0.8, 5.5, 8), closed: false },
       ],
       weights: { outline: 0.7, pipes: 0.3 },
-      hint: '放掉右下角的气，但留着那根硬骨头，撑住风筝的左角。',
+      hint: '放掉右下角的气，但留着那根刚性撑杆，顶住风筝的左角。',
       moreHints: [
         { t: 40, text: '从右下角外面斜着切一小刀，只切断那个小环。' },
-        { t: 85, text: '左边那根横着的硬管别动——它是风筝左角的骨架。' },
+        { t: 85, text: '左边那根横着的硬管别动——它是撑住风筝左角的桁架。' },
       ],
     },
     {
@@ -67,7 +67,7 @@ export default {
         { points: arc(CX + 52, CY + 52, 33, 0.8, 5.5, 8), closed: false },
       ],
       weights: { outline: 0.8, pipes: 0.2 },
-      hint: '现在，把最后那根硬骨头也剪断，让它彻底放松。',
+      hint: '现在，把最后那根刚性撑杆也剪断，让试件彻底松弛。',
       moreHints: [
         { t: 40, text: '从左边外面横着切进去，切断那根硬管，然后揉圆。' },
       ],

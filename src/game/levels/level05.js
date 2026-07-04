@@ -1,16 +1,16 @@
-// 第 5 关 · 自由塑形：骨头、肌肉、气袋混在一起，四个目标走完
-// 「捏形 → 泄气 → 一分为二 → 粘回重组」的完整旅程。
+// 第 5 关 · 复合机构：撑杆、缆线、气囊混在一起，四个目标走完
+// 「捏形 → 泄压 → 一分为二 → 粘回重组」的完整流程。
 import { circle, ellipse, roundedRect, line, arc } from './shapes.js';
 
 const CX = 360, CY = 320;
 
 export default {
   id: 'L5',
-  name: '自由塑形',
+  name: '试件 05 · 复合机构',
   dim: 2,
   timeLimit: 300,
   cutoff: 87,
-  intro: '这是毕业考试：它的每根管子脾气都不一样。',
+  intro: '这是结业测验：每根管路的材质都不一样。',
   body: {
     outline: circle(CX, CY, 103),
     edgeLen: 16,
@@ -31,9 +31,9 @@ export default {
         { points: line(CX - 32, CY - 75, CX + 32, CY - 75, 4), closed: false },
         { points: circle(CX - 50, CY + 50, 37, 16), closed: true },
       ],
-      hint: '先把它揉圆。感受一下每根管子的脾气。',
+      hint: '先把试件揉圆。顺便试探一下每根管路的物性。',
       moreHints: [
-        { t: 45, text: '顶上那根筋把头顶拽平了——揉圆时重点补顶部和底部。' },
+        { t: 45, text: '顶上那根缆线把顶部拽平了——揉圆时重点补顶部和底部。' },
       ],
     },
     {
@@ -46,10 +46,10 @@ export default {
         { points: arc(CX - 48, CY + 42, 32, 0.8, 5.5, 8), closed: false },
       ],
       weights: { outline: 0.7, pipes: 0.3 },
-      hint: '左下角藏着一个气袋。放了它，但别伤到别的管子。',
+      hint: '左下角埋着一个气囊。给它泄压，但别切到别的管路。',
       moreHints: [
         { t: 40, text: '从左下角外面斜着切一小刀，刚好够到那个小环就停。' },
-        { t: 85, text: '泄气后钉住左右两端，把身体压成宽饼。' },
+        { t: 85, text: '泄压后钉住左右两端，把试件压成宽饼。' },
       ],
     },
     {
@@ -67,7 +67,7 @@ export default {
       weights: { outline: 0.85, pipes: 0.15 },
       hint: '手起刀落，一分为二，再把两团分开摆好。',
       moreHints: [
-        { t: 40, text: '从正上方外面往下垂直一刀切到底，把身体劈成两半。' },
+        { t: 40, text: '从正上方外面往下垂直一刀切到底，把试件劈成两半。' },
         { t: 85, text: '抓住其中一半拖远一点，摆成左右两团。' },
       ],
     },
@@ -84,7 +84,7 @@ export default {
         { points: arc(CX - 25, CY + 120, 28, 0.8, 5.5, 8), closed: false },
       ],
       weights: { outline: 0.85, pipes: 0.15 },
-      hint: '把两团摞起来，用粘合缝住接缝，堆成一座塔。',
+      hint: '把两团摞起来，用粘合固定接缝，堆成一座塔。',
       moreHints: [
         { t: 40, text: '把一团拖到另一团的正上方，让它们贴在一起。' },
         { t: 85, text: '换粘合工具：按住上团的下边缘，拖到下团的上边缘松开，缝两针更牢。' },

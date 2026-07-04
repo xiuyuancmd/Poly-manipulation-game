@@ -18,7 +18,7 @@ const STORAGE_KEY = 'polyform.progress.v1';
 const EVENT_TOASTS = [
   ['rejected', '只能从软体外部下刀'],
   ['deflate', '嘶——有什么东西泄气了……'],
-  ['snap', '啪！内部有根管子绷断了'],
+  ['snap', '啪！内部有根管路绷断了'],
   ['bisect', '一分为二。'],
   ['weld', '粘合完成'],
   ['weldCut', '焊缝被切开了'],
@@ -203,7 +203,7 @@ export class Game {
     const need = this.cutoff();
     this.hud.showResult({
       won: false,
-      detail: `目标 ${this.targetIdx + 1}/${this.def.targets.length}：最佳读值 ${Math.round(this.bestTotal)}（达标线 ${need}）。摸清管道的脾气再来！`,
+      detail: `目标 ${this.targetIdx + 1}/${this.def.targets.length}：最佳读值 ${Math.round(this.bestTotal)}（达标线 ${need}）。摸清每根管路的物性再来！`,
       hasNext: false,
     });
   }

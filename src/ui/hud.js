@@ -43,14 +43,14 @@ export class HUD {
         <div id="toolbar" class="hidden">
           <button data-tool="pull" class="tool active">🖐 牵拉 <kbd>1</kbd></button>
           <button data-tool="cut" class="tool">✂️ 切割 <kbd>2</kbd></button>
-          <button data-tool="glue" class="tool">🩹 粘合 <kbd>3</kbd></button>
+          <button data-tool="glue" class="tool">🔗 粘合 <kbd>3</kbd></button>
           <span id="controls-chip" title="控制点 = 抓取 + 图钉">◉ 0/3</span>
         </div>
         <div id="toast" class="hidden"></div>
         <div id="banner" class="hidden"></div>
         <div id="menu" class="overlay">
           <h1>形变工坊 <small>PolyForm</small></h1>
-          <p class="tagline">拉扯、切割、粘合一团有脾气的软体——它内部管道的物性，要靠你亲手试出来。</p>
+          <p class="tagline">拉扯、切割、粘合一块物性未知的工程软材料——内部管路的材质，要靠你亲手试出来。</p>
           <div id="level-grid"></div>
           <p class="help">操作：拖拽=抓取（最多 3 个控制点）· 双击=钉住/解除 · 切割须从软体外下刀 · 相似度达标并保持 3 秒即完成目标</p>
         </div>

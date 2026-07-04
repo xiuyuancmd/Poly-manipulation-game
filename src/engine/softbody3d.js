@@ -108,7 +108,7 @@ export class SoftBody3D {
     }
     this.buildPipeBends(pipe);
     // Ends anchor bilaterally to their 2 nearest surface vertices; middles get
-    // rope tethers (same tendon-insertion model as 2D).
+    // rope tethers (same cable end-fitting model as 2D).
     for (const p of parts) {
       const isEnd = p === parts[0] || p === parts[count - 1];
       const near = this.verts

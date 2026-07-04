@@ -19,7 +19,9 @@ const OFFSET = 0.9;           // separation between the two new faces of a cut
 export function performCut(body, ax, ay, bx, by) {
   const { ps } = body;
   if (body.containsPoint(ax, ay)) {
-    body.emit('rejected', { reason: 'insideStart' });
+    // Payload carries the attempted knife segment so the renderer can put the
+    // "blade skidded" feedback exactly where the player tried to cut.
+    body.emit('rejected', { reason: 'insideStart', x0: ax, y0: ay, x1: bx, y1: by });
     return;
   }
 

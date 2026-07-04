@@ -35,6 +35,12 @@ export class SoftBody2D {
     this.bendCompliance = config.bendCompliance ?? 8e-4;
     this.latticeCompliance = config.latticeCompliance ?? 1.5e-3;
     this.coupleCompliance = config.coupleCompliance ?? 8e-4;
+    // Runtime pressure-target easing (per-step lerp factor toward the goal;
+    // 0.04 @ 60 Hz ~ a 0.4 s collapse). Default 0 = instant, which keeps the
+    // raw engine — and every deterministic engine/solve test — bit-exact with
+    // the pre-easing behaviour; the game session opts in for the felt
+    // transition. Construction always snaps to the goal regardless.
+    this.pressureSlew = config.pressureSlew ?? 0;
 
     this.islands = [];   // {id, ring:[particle...], areaC, baseRestArea, alive, edgeCs:[], bendCs:[]}
     this.latticeCs = []; // {c, a, b}
@@ -66,7 +72,7 @@ export class SoftBody2D {
     const island = body.makeIsland(ring);
     body.buildLattice(island, def.lattice);
     for (const pd of def.pipes ?? []) body.addPipe(pd);
-    body.recomputePressure();
+    body.recomputePressure(true); // construction: snap to goal, no slew
     return body;
   }
 
@@ -92,6 +98,9 @@ export class SoftBody2D {
     const area = Math.abs(ringSignedArea(this.ps, ring));
     island.baseRestArea = area;
     island.areaC = this.solver.add(new AreaConstraint2D(ring, area, 1e-6));
+    // Newly built rings start AT their pressure goal (no transient); only
+    // runtime goal changes (deflation, surgery) take the slow path in update().
+    island.pressureGoal = area;
     this.islands.push(island);
     return island;
   }
@@ -250,11 +259,15 @@ export class SoftBody2D {
     return factor;
   }
 
-  /** Body area target = rest area x (base pressure + live pressure-pipe contributions). */
-  recomputePressure() {
+  /** Body area target = rest area x (base pressure + live pressure-pipe
+   *  contributions). Writes the GOAL only; update() slews the live target
+   *  toward it (~0.4 s), so deflation reads as escaping air rather than a
+   *  teleport. `immediate` (construction paths) snaps the target in place. */
+  recomputePressure(immediate = false) {
     for (const island of this.islands) {
       if (!island.alive) continue;
-      island.areaC.targetArea = island.baseRestArea * this.computeFactor(island);
+      island.pressureGoal = island.baseRestArea * this.computeFactor(island);
+      if (immediate || !this.pressureSlew) island.areaC.targetArea = island.pressureGoal;
     }
   }
 
@@ -272,10 +285,23 @@ export class SoftBody2D {
   // ---- pipe surgery (shared by cutting and brittle failure) ----------------
 
   severPipeSegment(pipe, segIdx) {
+    const { ps } = this;
     const seg = pipe.segCs[segIdx];
     if (!seg) return;
+    // Cut point (severed segment midpoint) captured BEFORE surgery, so event
+    // payloads describe where the material actually parted (effects/sfx).
+    const mx = (ps.x[seg.a] + ps.x[seg.b]) / 2;
+    const my = (ps.y[seg.a] + ps.y[seg.b]) / 2;
     this.solver.remove(seg.c);
     if (pipe.closed) {
+      // Outward jet direction: loop centroid -> cut point (computed before
+      // the parts array is rotated by the surgery below).
+      let cx = 0, cy = 0;
+      for (const p of pipe.parts) { cx += ps.x[p]; cy += ps.y[p]; }
+      cx /= pipe.parts.length; cy /= pipe.parts.length;
+      const dl = Math.hypot(mx - cx, my - cy);
+      const dirX = dl > 1e-9 ? (mx - cx) / dl : 1;
+      const dirY = dl > 1e-9 ? (my - cy) / dl : 0;
       // Ring pipe becomes one open chain starting just after the removed segment.
       const n = pipe.parts.length;
       const at = (segIdx + 1) % n;
@@ -289,9 +315,9 @@ export class SoftBody2D {
         pipe.areaC = null;
         pipe.deflated = true;
         this.recomputePressure();
-        this.emit('deflate', { pipe: pipe.id });
+        this.emit('deflate', { pipe: pipe.id, x: mx, y: my, dirX, dirY });
       }
-      this.emit('pipeCut', { pipe: pipe.id });
+      this.emit('pipeCut', { pipe: pipe.id, x: mx, y: my, pipeType: pipe.type });
       return;
     }
     // Open chain splits in two.
@@ -334,17 +360,28 @@ export class SoftBody2D {
     pipe.alive = false;
     const idx = this.pipes.indexOf(pipe);
     this.pipes.splice(idx, 1, ...out);
-    this.emit('pipeCut', { pipe: pipe.id });
+    this.emit('pipeCut', { pipe: pipe.id, x: mx, y: my, pipeType: pipe.type });
   }
 
-  /** Per-frame material checks (brittle pipes snapping under overstretch). */
+  /** Per-frame material checks: with pressureSlew enabled, pressure targets
+   *  ease toward their goal (deflation plays out over ~0.4 s instead of
+   *  teleporting); brittle pipes snap under overstretch. */
   update() {
+    if (this.pressureSlew) {
+      for (const island of this.islands) {
+        if (!island.alive || island.pressureGoal == null) continue;
+        island.areaC.targetArea += (island.pressureGoal - island.areaC.targetArea) * this.pressureSlew;
+      }
+    }
     for (const pipe of [...this.pipes]) {
       if (!pipe.alive || !pipe.props.breakStrain) continue;
       for (let k = 0; k < pipe.segCs.length; k++) {
-        if (pipe.segCs[k].c.currentStrain(this.ps) > pipe.props.breakStrain) {
+        const s = pipe.segCs[k];
+        if (s.c.currentStrain(this.ps) > pipe.props.breakStrain) {
+          const bx = (this.ps.x[s.a] + this.ps.x[s.b]) / 2;
+          const by = (this.ps.y[s.a] + this.ps.y[s.b]) / 2;
           this.severPipeSegment(pipe, k);
-          this.emit('snap', {});
+          this.emit('snap', { x: bx, y: by });
           break;
         }
       }
@@ -382,6 +419,11 @@ export class SoftBody2D {
       islands: this.aliveIslands().map(island => ({
         points: this.ringPoints(island),
         edgeStrains: island.edgeCs.map(e => e.c.currentStrain(ps)),
+        // Live pressure factor (target area / rest area): 1.0 neutral,
+        // >1 inflated, <1 deflating. Drives renderer desaturation.
+        pressure: island.baseRestArea > 1e-9
+          ? island.areaC.targetArea / island.baseRestArea
+          : 1,
       })),
       pipes: this.pipes.filter(p => p.alive).map(p => ({
         id: p.id,

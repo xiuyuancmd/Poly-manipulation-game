@@ -238,6 +238,25 @@ export const THEMES = {
       debrisStyle: 'calcified',
       sfx: 'organic',
       rejectLabel: '只能从标本外部下刀',
+      // 生物材质档案（单一数据源）：会话层读取并注入引擎的可选物理特性。
+      // lab 无 physics 键 => 引擎一切新特性关闭，与既有行为逐位一致。
+      physics: {
+        // 亚临界阻尼：软组织高耗散，松手缓慢定形而非果冻回振。
+        // （Planner 原型 0.88；0.92 振铃指标同样达标——止息 0.62s、过零 0，
+        //   且 L2 目标二在 bio 物理下的作者解可过 cutoff，0.88 过不了。）
+        solver: { damping: 0.92, viscoelastic: true },
+        body: {
+          // SLS 蠕变：持续拉扯让膜的静息长度向当前长度迁移（组织"流动"），
+          // 松手后向出厂 rest0 回复；±2% 应变死区内只回复不蠕变。
+          membraneCreep: { creepK: 0.5, recoverK: 0.3, creepOnset: 0.02, restLo: 0.7, restHi: 1.5 },
+          // J 形应力-应变：超过 15% 应变后胶原募集，柔度按 (1+4·excess²) 收紧。
+          membraneHarden: { hardenK: 4, hardenOnset: 0.15 },
+        },
+        // 按管型覆盖 PIPE_STYLES（本轮暂无覆盖；肌肉动态留后轮）。
+        pipeStyles: {},
+        // 搏动性失血：切断承压环后，失压目标随心搏分 4 跳阶梯下调。
+        bleed: { pulses: 4 },
+      },
     },
   },
 };

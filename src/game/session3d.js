@@ -19,7 +19,17 @@ export class Session3D {
     this.def = def;
     this.ps = new ParticleSystem();
     this.solver = new Solver(this.ps);
+    // Material profile (bio): solver knobs only — 3D constraints carry no
+    // creep opts, so the viscoelastic pass is a no-op and the profile's
+    // subcritical damping is the felt difference. Applied before settle
+    // (settle swaps in its own transient damping and restores this value).
+    const fx = themeFx();
+    const phys = fx.physics;
     this.body = SoftBody3D.buildCube(this.ps, this.solver, def.body3d);
+    if (phys?.solver) {
+      this.solver.damping = phys.solver.damping;
+      this.solver.viscoelastic = !!phys.solver.viscoelastic;
+    }
     for (const pd of def.pipes3d ?? []) this.body.addPipe(pd);
     this.body.settle(150);
     this.body.drainEvents();
@@ -33,7 +43,7 @@ export class Session3D {
     // pipeCut event carries no coordinates, so the cut branch projects the
     // severed segment's midpoint itself and feeds Effects directly.
     // Theme fx style injected here (no pulse in 3D levels by design).
-    this.effects = new Effects(themeFx());
+    this.effects = new Effects(fx);
     this.grabs = new Map();   // pointerId -> {vertex, anchors:[{c,ox,oy,oz}], plane}
     this.pins = new Set();
     this.orbit = null;

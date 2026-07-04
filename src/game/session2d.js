@@ -21,6 +21,12 @@ export class Session2D {
     this.def = def;
     this.ps = new ParticleSystem();
     this.solver = new Solver(this.ps);
+    // Theme fx resolved BEFORE the body build: the bio material profile
+    // (fx.physics) has to configure engine options at construction time. In
+    // Node tests themeFx() safely resolves to lab, which has NO physics key —
+    // the build config and solver stay bit-identical to the pre-profile code.
+    const fx = themeFx();
+    const phys = fx.physics;
     // pressureSlew: live games ease runtime pressure changes over ~0.4 s so a
     // punctured loop audibly AND visibly collapses instead of teleporting.
     // (The raw engine default stays instant — deterministic tests untouched.)
@@ -28,7 +34,16 @@ export class Session2D {
       ...def.body,
       pipes: def.pipes ?? [],
       pressureSlew: def.body.pressureSlew ?? 0.04,
+      ...(phys?.body ?? {}),
+      pipeStyles: phys?.pipeStyles,
     });
+    // Material profile solver knobs (bio: subcritical damping + viscoelastic
+    // membrane). Applied BEFORE settle — settle() swaps in its own transient
+    // damping (0.6) and restores this value afterwards, so there's no clash.
+    if (phys?.solver) {
+      this.solver.damping = phys.solver.damping;
+      this.solver.viscoelastic = !!phys.solver.viscoelastic;
+    }
     // Authored-pose snapshot BEFORE the settle transient: the pressure/cable
     // transient can spin the whole specimen tens of degrees while settling,
     // leaving the live piece visibly rotated against its HUD preview.
@@ -56,13 +71,18 @@ export class Session2D {
     // Theme fx (session layer only). In Node tests themeFx() safely resolves
     // to the lab defaults: pulse=false (the pulse code below never runs) and
     // reference particle styles — behaviour is bit-identical to pre-theme.
-    const fx = themeFx();
     this.effects = new Effects(fx);
     // Bio theme heartbeat: a gentle sinusoidal modulation of each island's
     // pressure target. pulseT is the shared phase clock (game.js syncs the
     // ambient thump to it).
     this.pulse = !!fx.pulse;
     this.pulseT = 0;
+    // Pulsatile bleed-out (bio material profile): severing a pressure loop
+    // stages the island's depressurization as N systole-synced steps instead
+    // of one smooth slide. Session layer only; lab (no physics key) never
+    // schedules anything.
+    this.bleedCfg = phys?.bleed ?? null;
+    this.bleeds = [];  // {island, to, jumps:[...], k, pipeId, x, y, dirX, dirY}
     this.grabs = new Map();   // pointerId -> {anchor, particle}
     this.pins = new Set();    // particle indices
     // Cable-guide groove state (containPipes): seated particles and
@@ -143,6 +163,7 @@ export class Session2D {
       this.accumulator -= 1 / 60;
     }
     if (this.pulse) this.applyPulse(dt);
+    if (this.bleeds.length) this.updateBleeds(dt);
     // Drop controls whose particles died in a cut.
     for (const [id, g] of [...this.grabs]) {
       g.anchors = g.anchors.filter(a => {
@@ -214,6 +235,86 @@ export class Session2D {
       island._rawTarget = island.areaC.targetArea;
       island.areaC.targetArea = island._rawTarget * (1 + s * fade);
     }
+  }
+
+  /** Pulsatile bleed, part 1 — schedule. Called on a 'deflate' event (bio
+   *  profile only): every island whose pressure goal just dropped gets its
+   *  goal LIFTED back to the current (pre-collapse) level, then walked down
+   *  to the same final value in N systole-synced steps of decreasing size
+   *  (weights N, N-1, ..., 1 — early beats push the most blood out). The
+   *  engine's pressureSlew (~0.4 s) rounds each step off, and the terminal
+   *  state is exactly the plain-slew terminal state. Works purely on
+   *  pressureGoal — the pulse modulation ("restore-then-overlay" on
+   *  areaC.targetArea) composes with it untouched. */
+  startBleed(e) {
+    const N = Math.max(1, Math.round(this.bleedCfg.pulses ?? 4));
+    for (const island of this.body.aliveIslands()) {
+      if (!island.areaC || island.pressureGoal == null || island.baseRestArea <= 1e-9) continue;
+      const cur = island._rawTarget ?? island.areaC.targetArea;
+      const to = island.pressureGoal;
+      if (cur - to <= island.baseRestArea * 0.02) continue; // not meaningfully depressurizing
+      this.bleeds = this.bleeds.filter(b => b.island !== island); // re-cut: reschedule
+      const total = cur - to;
+      let wsum = 0;
+      for (let k = 0; k < N; k++) wsum += N - k;
+      const jumps = [];
+      for (let k = 0; k < N; k++) jumps.push(total * (N - k) / wsum);
+      island.pressureGoal = cur;
+      this.bleeds.push({
+        island, to, jumps, k: 0,
+        pipeId: e.pipe, x: e.x, y: e.y, dirX: e.dirX ?? 1, dirY: e.dirY ?? 0,
+      });
+    }
+  }
+
+  /** Pulsatile bleed, part 2 — execute. On each systole (the pulse phase
+   *  passing the sin peak at 0.25) every scheduled bleed steps its island's
+   *  pressureGoal down one notch and spurts a blood jet whose intensity
+   *  follows the step size (weaker as pressure runs out). The last step lands
+   *  exactly on the plain-slew terminal value. */
+  updateBleeds(dt) {
+    const freq = 1.15; // Hz — same clock as applyPulse
+    const cur = ((this.pulseT * freq) % 1 + 1) % 1;
+    const prev = (((this.pulseT - dt) * freq) % 1 + 1) % 1;
+    const crossed = prev <= cur ? (prev < 0.25 && cur >= 0.25) : (prev < 0.25 || cur >= 0.25);
+    if (!crossed) return;
+    for (const b of [...this.bleeds]) {
+      const island = b.island;
+      if (!island.alive || !island.areaC) {
+        this.bleeds.splice(this.bleeds.indexOf(b), 1);
+        continue;
+      }
+      const jump = b.jumps[b.k];
+      island.pressureGoal = Math.max(b.to, island.pressureGoal - jump);
+      this.bleedJet(b, jump / b.jumps[0]);
+      b.k++;
+      if (b.k >= b.jumps.length) {
+        island.pressureGoal = b.to;
+        this.bleeds.splice(this.bleeds.indexOf(b), 1);
+      }
+    }
+  }
+
+  /** One systole spurt out of the wound: track the severed vessel's freed tip
+   *  (chain start after ring surgery) so the jet follows the deforming body;
+   *  direction = island centroid -> tip (outward). Falls back to the cut-time
+   *  snapshot if the vessel fragment is gone. */
+  bleedJet(b, intensity) {
+    const { ps } = this;
+    let x = b.x, y = b.y, dx = b.dirX, dy = b.dirY;
+    const pipe = this.body.pipes.find(p => p.alive && p.id === b.pipeId);
+    if (pipe && pipe.parts.length && ps.alive[pipe.parts[0]]) {
+      const tip = pipe.parts[0];
+      x = ps.x[tip]; y = ps.y[tip];
+      if (b.island.alive && b.island.ring.length) {
+        let cx = 0, cy = 0;
+        for (const i of b.island.ring) { cx += ps.x[i]; cy += ps.y[i]; }
+        cx /= b.island.ring.length; cy /= b.island.ring.length;
+        const d = Math.hypot(x - cx, y - cy);
+        if (d > 1e-6) { dx = (x - cx) / d; dy = (y - cy) / d; }
+      }
+    }
+    this.effects.spawnJet(x, y, dx, dy, intensity);
   }
 
   /** Cable-guide grooves ("导缆槽") of the casting fixture: a pipe particle
@@ -519,6 +620,9 @@ export class Session2D {
           && Number.isFinite(e.x) && Number.isFinite(e.y)) {
         this.cableRecoil(e.x, e.y);
       }
+      // Bio material profile: a severed pressure loop bleeds out in
+      // heartbeat-synced steps instead of one smooth slide.
+      if (e.type === 'deflate' && this.bleedCfg && this.pulse) this.startBleed(e);
     }
     return evts;
   }

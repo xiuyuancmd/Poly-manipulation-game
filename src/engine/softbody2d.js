@@ -183,8 +183,8 @@ export class SoftBody2D {
     this.buildPipeBends(pipe);
     // Couple pipe particles to their 2 nearest boundary particles. Mid-chain
     // particles get rope tethers (resist stretch only, so an inflating loop can
-    // drift freely); the ENDS of open pipes are anchored bilaterally — tendon
-    // insertions — so muscles and struts actually transmit force to the wall.
+    // drift freely); the ENDS of open pipes are anchored bilaterally — cable
+    // end-fittings — so cables and struts actually transmit force to the wall.
     const ringAll = [];
     for (const isl of this.islands) if (isl.alive) ringAll.push(...isl.ring);
     const coupleMax = this.edgeLen * 8;
@@ -206,9 +206,10 @@ export class SoftBody2D {
     return pipe;
   }
 
-  /** A muscle must pull its ENDS together — per-segment contraction alone lets
-   *  the chain coil up slack. Tie the endpoints with the contracted total length.
-   *  Severing the chain removes the tie: cutting a tendon releases its pull. */
+  /** A pre-tensioned cable must pull its ENDS together — per-segment shortening
+   *  alone lets the chain coil up slack. Tie the endpoints with the shortened
+   *  total length. Severing the chain removes the tie: cutting a cable releases
+   *  its pull. */
   buildPipeTie(pipe) {
     if (pipe.tieC) { this.solver.remove(pipe.tieC); pipe.tieC = null; }
     if (pipe.closed || pipe.type !== 'contractile' || pipe.parts.length < 3) return;
@@ -370,6 +371,32 @@ export class SoftBody2D {
       }));
   }
 
+  /** Read-only mechanical readouts for the renderer: per-edge boundary strain,
+   *  per-segment pipe strain and pressure-loop fill fraction. Pure query —
+   *  registers nothing, mutates nothing. `edgeStrains[k]` matches the ring edge
+   *  ring[k] -> ring[k+1]; `segStrains[k]` matches parts[k] -> parts[k+1]. */
+  renderState() {
+    const { ps } = this;
+    const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+    return {
+      islands: this.aliveIslands().map(island => ({
+        points: this.ringPoints(island),
+        edgeStrains: island.edgeCs.map(e => e.c.currentStrain(ps)),
+      })),
+      pipes: this.pipes.filter(p => p.alive).map(p => ({
+        id: p.id,
+        closed: p.closed,
+        deflated: p.deflated,
+        points: p.parts.map(i => ({ x: ps.x[i], y: ps.y[i] })),
+        segStrains: p.segCs.map(s => s.c.currentStrain(ps)),
+        // currentArea is SIGNED — take |.| before comparing with the target.
+        fill: p.areaC
+          ? clamp(Math.abs(p.areaC.currentArea(ps)) / p.areaC.targetArea, 0, 1.5)
+          : null,
+      })),
+    };
+  }
+
   /** (chains, loops) — the similarity topology gate. */
   pipeTopology() {
     let chains = 0, loops = 0;
@@ -432,7 +459,7 @@ export class SoftBody2D {
     };
     const before = com();
     // Heavy damping while the initial constraint transient (pressure targets,
-    // muscle contraction) plays out, so it cannot fold pipes or throw the body.
+    // cable pre-tension) plays out, so it cannot fold pipes or throw the body.
     const prevDamping = this.solver.damping;
     this.solver.damping = 0.6;
     for (let s = 0; s < steps; s++) {

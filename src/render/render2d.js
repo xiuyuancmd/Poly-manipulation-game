@@ -1,13 +1,19 @@
 // Canvas 2D renderer for soft-body levels. Pure drawing: reads session/body
-// state, never mutates it. Pipes all render identically — their material is
-// the level's hidden secret.
+// state (via body.renderState() mechanical readouts), never mutates it.
+// The body renders as a translucent cast-silicone part with pipes embedded
+// INSIDE the matrix. Pipes share one base colour regardless of material type —
+// the only visible differences come from real mechanical state (per-segment
+// stress whitening). No idle animation: everything below is a pure function
+// of the current physics state.
 
 export const COLORS = {
   bg: '#14171c',
   grid: 'rgba(255,255,255,0.035)',
-  bodyFill: 'rgba(56,116,98,0.92)',
+  bodyFill: 'rgba(56,116,98,0.60)',   // translucent matrix base coat
+  bodyGlaze: 'rgba(56,116,98,0.20)',  // over-pipe glaze: pipes sit inside the material
   bodyStroke: '#7ee0c3',
   pipe: '#aab6c6',
+  pipeCasing: 'rgba(15,22,27,0.50)',  // dark channel bore around every pipe
   pipeEnd: '#c9d4e2',
   ghostStroke: 'rgba(232,198,106,0.85)',
   ghostFill: 'rgba(232,198,106,0.07)',
@@ -18,6 +24,44 @@ export const COLORS = {
   glue: '#66a3ff',
   weld: '#8fb7ff',
 };
+
+// Fixed studio light for the wet-highlight pass (unit vector, up-left).
+const LIGHT_X = -0.6, LIGHT_Y = -0.8;
+
+/** Quantized strain -> colour ramp (base -> white). Caches the CSS strings so
+ *  per-edge strokes do not churn new strings every frame. */
+function makeStrainRamp(base, white, s0, s1) {
+  const N = 24;
+  const cache = new Array(N + 1);
+  return (strain) => {
+    const t = Math.min(1, Math.max(0, (strain - s0) / (s1 - s0)));
+    const b = Math.round(t * N);
+    if (!cache[b]) {
+      const f = b / N;
+      const r = Math.round(base[0] + (white[0] - base[0]) * f);
+      const g = Math.round(base[1] + (white[1] - base[1]) * f);
+      const bl = Math.round(base[2] + (white[2] - base[2]) * f);
+      cache[b] = `rgb(${r},${g},${bl})`;
+    }
+    return cache[b];
+  };
+}
+
+// Pipes whiten visibly once stretched past rest (real stress readout).
+const pipeStrainColor = makeStrainRamp([170, 182, 198], [246, 250, 253], 1.02, 1.45);
+// Boundary membrane whitens under tension (silicone stress-whitening).
+const edgeStrainColor = makeStrainRamp([126, 224, 195], [242, 255, 250], 1.01, 1.12);
+
+/** Sign that turns a 90-degree rotation of an edge direction into the INWARD
+ *  normal for this ring (+1: ring has positive signed area). */
+function ringInwardSign(pts) {
+  let a = 0;
+  for (let i = 0, n = pts.length; i < n; i++) {
+    const p = pts[i], q = pts[(i + 1) % n];
+    a += p.x * q.y - q.x * p.y;
+  }
+  return a >= 0 ? 1 : -1;
+}
 
 export function drawScene(ctx, session, view = {}) {
   const { canvas } = ctx;
@@ -64,19 +108,33 @@ function drawGhost(ctx, ghost) {
   ctx.restore();
 }
 
+/** Layered material pipeline (order = layers): translucent matrix, embedded
+ *  pipes with stress whitening, over-pipe glaze, per-edge boundary (tension
+ *  whitening / compression wrinkles), wet highlight, grab dents. */
 function drawBody(ctx, session) {
   const { body, ps } = session;
-  for (const island of body.aliveIslands()) {
-    const pts = body.ringPoints(island);
-    tracePoly(ctx, pts);
+  const rs = body.renderState();
+
+  // 1 — translucent silicone matrix.
+  for (const island of rs.islands) {
+    tracePoly(ctx, island.points);
     ctx.fillStyle = COLORS.bodyFill;
     ctx.fill();
-    ctx.strokeStyle = COLORS.bodyStroke;
-    ctx.lineWidth = 2.5;
-    ctx.lineJoin = 'round';
-    ctx.stroke();
   }
-  // Welds as stitches.
+
+  // 2 — embedded pipes: one shared base colour for every material type; the
+  //     only per-segment variation is genuine stress whitening.
+  drawPipes(ctx, rs.pipes);
+
+  // 3 — glaze: a faint coat of body colour OVER the pipes, so they read as
+  //     channels inside the material rather than lines painted on top.
+  for (const island of rs.islands) {
+    tracePoly(ctx, island.points);
+    ctx.fillStyle = COLORS.bodyGlaze;
+    ctx.fill();
+  }
+
+  // Welds as stitches (above the glaze — they live at the surface).
   ctx.strokeStyle = COLORS.weld;
   ctx.lineWidth = 2;
   for (const w of body.welds) {
@@ -85,23 +143,153 @@ function drawBody(ctx, session) {
     ctx.arc(mx, my, 2.6, 0, Math.PI * 2);
     ctx.stroke();
   }
-  // Pipes: identical look for every material type.
-  for (const chain of body.pipeChains()) {
-    ctx.strokeStyle = COLORS.pipe;
-    ctx.lineWidth = 5;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    tracePolyline(ctx, chain.points, chain.closed);
+
+  // 4 + 5 — boundary per-edge strokes, wrinkles and wet highlight.
+  for (const island of rs.islands) {
+    const inw = ringInwardSign(island.points);
+    drawBoundary(ctx, island, inw);
+    drawWetHighlight(ctx, island, inw);
+  }
+
+  // 6 — grab dents (clipped to the body so the shading never spills out).
+  drawGrabDents(ctx, session, rs.islands);
+}
+
+function drawPipes(ctx, pipes) {
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  for (const pipe of pipes) {
+    const pts = pipe.points, n = pts.length;
+    // Channel bore: a slightly wider dark pass under the pipe body.
+    ctx.strokeStyle = COLORS.pipeCasing;
+    ctx.lineWidth = 6.5;
+    tracePolyline(ctx, pts, pipe.closed);
     ctx.stroke();
-    if (!chain.closed) {
+    // Pipe body, segment by segment: colour tracks the segment's real strain.
+    ctx.lineWidth = 4.4;
+    const segN = pipe.segStrains.length;
+    for (let k = 0; k < segN; k++) {
+      const a = pts[k], b = pts[(k + 1) % n];
+      ctx.strokeStyle = pipeStrainColor(pipe.segStrains[k]);
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+    }
+    if (!pipe.closed) {
       ctx.fillStyle = COLORS.pipeEnd;
-      for (const e of [chain.points[0], chain.points[chain.points.length - 1]]) {
+      for (const e of [pts[0], pts[n - 1]]) {
         ctx.beginPath();
         ctx.arc(e.x, e.y, 3.4, 0, Math.PI * 2);
         ctx.fill();
       }
     }
   }
+}
+
+/** Per-edge boundary: tension whitens the stroke, compression carves short
+ *  wrinkle ticks perpendicular to the edge (deterministic phase — no RNG,
+ *  so nothing flickers between frames). */
+function drawBoundary(ctx, island, inw) {
+  const pts = island.points, n = pts.length;
+  ctx.lineCap = 'round';
+  ctx.lineWidth = 2.5;
+  for (let k = 0; k < n; k++) {
+    const a = pts[k], b = pts[(k + 1) % n];
+    const s = island.edgeStrains[k] ?? 1;
+    ctx.strokeStyle = edgeStrainColor(s);
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+    if (s < 0.97) drawWrinkles(ctx, a, b, k, s, inw);
+  }
+}
+
+function drawWrinkles(ctx, a, b, k, s, inw) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-6) return;
+  const nx = (-dy / len) * inw, ny = (dx / len) * inw; // inward normal
+  const depth = Math.min(1, (0.97 - s) / 0.12);
+  const count = 2 + (k & 1); // 2 or 3 ticks, phase fixed by edge index
+  ctx.strokeStyle = `rgba(10,26,21,${(0.28 + 0.4 * depth).toFixed(2)})`;
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  for (let i = 0; i < count; i++) {
+    const f = (i + 1) / (count + 1);
+    const px = a.x + dx * f, py = a.y + dy * f;
+    const l1 = 2 + 4 + 3 * depth;
+    ctx.moveTo(px + nx * 2, py + ny * 2);
+    ctx.lineTo(px + nx * l1, py + ny * l1);
+  }
+  ctx.stroke();
+}
+
+/** Thin bright line just inside boundary edges whose outward normal faces the
+ *  fixed light — a wet sheen. Brightness grows slightly with edge strain. */
+function drawWetHighlight(ctx, island, inw) {
+  const pts = island.points, n = pts.length;
+  ctx.lineCap = 'round';
+  ctx.lineWidth = 1.4;
+  for (let k = 0; k < n; k++) {
+    const a = pts[k], b = pts[(k + 1) % n];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-6) continue;
+    const nx = (-dy / len) * inw, ny = (dx / len) * inw; // inward
+    const facing = -nx * LIGHT_X - ny * LIGHT_Y;         // outward · light
+    if (facing < 0.35) continue;
+    const s = island.edgeStrains[k] ?? 1;
+    const alpha = Math.min(0.6,
+      0.10 + (facing - 0.35) * 0.5 + Math.max(0, s - 1) * 1.5);
+    ctx.strokeStyle = `rgba(224,255,245,${alpha.toFixed(2)})`;
+    ctx.beginPath();
+    ctx.moveTo(a.x + nx * 2.6, a.y + ny * 2.6);
+    ctx.lineTo(b.x + nx * 2.6, b.y + ny * 2.6);
+    ctx.stroke();
+  }
+}
+
+/** Finger-press response at each live grab: a radial dark dent around the
+ *  grabbed particle plus a small bright bulge arc on the side away from the
+ *  pull — pure function of grab state, nothing animates on its own. */
+function drawGrabDents(ctx, session, islands) {
+  const { ps } = session;
+  if (session.grabs.size === 0) return;
+  ctx.save();
+  ctx.beginPath();
+  for (const island of islands) {
+    const pts = island.points;
+    pts.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+    ctx.closePath();
+  }
+  ctx.clip();
+  for (const [, g] of session.grabs) {
+    const p = g.particle;
+    if (!ps.alive[p]) continue;
+    const px = ps.x[p], py = ps.y[p];
+    const grad = ctx.createRadialGradient(px, py, 2, px, py, 30);
+    grad.addColorStop(0, 'rgba(5,14,11,0.35)');
+    grad.addColorStop(0.65, 'rgba(5,14,11,0.14)');
+    grad.addColorStop(1, 'rgba(5,14,11,0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(px, py, 30, 0, Math.PI * 2);
+    ctx.fill();
+    // Material piles up on the far side of the pull direction.
+    const dx = g.x - px, dy = g.y - py;
+    const d = Math.hypot(dx, dy);
+    if (d > 4) {
+      const ang = Math.atan2(-dy, -dx);
+      ctx.strokeStyle = 'rgba(228,255,246,0.30)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(px, py, 13, ang - 0.85, ang + 0.85);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
 }
 
 function drawControls(ctx, session) {

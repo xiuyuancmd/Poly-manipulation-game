@@ -228,6 +228,15 @@ function drawBody(ctx, session) {
     ctx.fill();
   }
 
+  // 3b — interior top light: a broad radial gradient pooled toward the fixed
+  //      studio light, so the slab reads as a volume instead of a flat coat.
+  //      Follows the light through the LIGHT_X/LIGHT_Y vector and dies with
+  //      the island's internal pressure (a slack casting stops pooling light:
+  //      full brightness at rest pressure, fully dark by p <= 0.8).
+  for (const island of rs.islands) {
+    drawInteriorLight(ctx, island);
+  }
+
   // Welds as stitches (above the glaze — they live at the surface).
   ctx.strokeStyle = COLORS.weld;
   ctx.lineWidth = 2;
@@ -247,6 +256,38 @@ function drawBody(ctx, session) {
 
   // 6 — grab dents (clipped to the body so the shading never spills out).
   drawGrabDents(ctx, session, rs.islands);
+}
+
+/** Interior volume light: one radial gradient per island, centred a quarter
+ *  radius toward the studio light from the island centroid, clipped by the
+ *  island polygon (the gradient IS the fill of the traced poly). Pure
+ *  function of island geometry + pressure — zero idle animation. */
+function drawInteriorLight(ctx, island) {
+  const p = island.pressure;
+  // Pool gloss: 1 at/above rest pressure, linear to 0 at p <= 0.8. Stricter
+  // than the rim gloss on purpose — the volume light dies with a deflation.
+  const poolGloss = p < 1 ? Math.max(0, 1 - (1 - p) / 0.2) : 1;
+  if (poolGloss <= 0) return;
+  const pts = island.points;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  let cx = 0, cy = 0;
+  for (const q of pts) {
+    minX = Math.min(minX, q.x); maxX = Math.max(maxX, q.x);
+    minY = Math.min(minY, q.y); maxY = Math.max(maxY, q.y);
+    cx += q.x; cy += q.y;
+  }
+  cx /= pts.length; cy /= pts.length;
+  const R = 0.75 * Math.max(maxX - minX, maxY - minY);
+  if (!(R > 1e-6)) return;
+  const lx = cx + LIGHT_X * 0.25 * R, ly = cy + LIGHT_Y * 0.25 * R;
+  const A = 0.09 * poolGloss;
+  const grad = ctx.createRadialGradient(lx, ly, 0, lx, ly, R);
+  grad.addColorStop(0, `rgba(224,255,245,${A.toFixed(3)})`);
+  grad.addColorStop(0.55, `rgba(224,255,245,${(A * 0.35).toFixed(3)})`);
+  grad.addColorStop(1, 'rgba(224,255,245,0)');
+  tracePoly(ctx, pts);
+  ctx.fillStyle = grad;
+  ctx.fill();
 }
 
 function drawPipes(ctx, pipes) {

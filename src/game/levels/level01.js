@@ -23,6 +23,7 @@ export default {
       // Both conservation laws respected: area ~ hexagon area (gel), and
       // perimeter ~671 vs hexagon 660 (elastic boundary allows ~2% stretch).
       name: '长轴椭圆坯',
+      cutoff: 78,
       outlines: [ellipse(CX, CY, 135, 74)],
       pipes: [{ points: line(CX - 90, CY, CX + 90, CY, 8), closed: false }],
       hint: '抓住左右两端往外拉；或者钉住一端，拖另一端。',

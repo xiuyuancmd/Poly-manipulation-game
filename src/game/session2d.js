@@ -176,10 +176,14 @@ export class Session2D {
   /** Cable-guide grooves ("导缆槽") of the casting fixture: a pipe particle
    *  that has come to REST just outside the specimen wall is seated back to
    *  2 px inside the nearest island boundary. Session-layer containment only —
-   *  no engine change. Gates:
-   *    - INITIAL seating requires speed < 30 px/s — a recoiling cable tip
-   *      (~220 px/s) whips freely — and freshly severed fragments carry a
-   *      1.2 s exemption window on top (set by cableRecoil);
+   *  no engine change. The groove wall is a NORMAL one-sided contact — purely
+   *  dissipative, it only ever removes outward motion. Gates:
+   *    - INITIAL seating requires OUTWARD-normal speed < 30 px/s — a
+   *      recoiling cable tip punching outward (~220 px/s) whips freely, but a
+   *      pinned specimen's rest-length oscillation (fast yet mostly
+   *      tangential/alternating) is caught the moment its outward component
+   *      dips — and freshly severed fragments carry a 1.2 s exemption window
+   *      on top (set by cableRecoil);
    *    - protrusion <= 24 px — a fragment flung far away is NOT teleported
    *      across the bench (beyond that the seat releases entirely);
    *    - no live grabs — never fights the player's hand.
@@ -187,11 +191,13 @@ export class Session2D {
    *  particle back out with 100+ px/s every frame (measured on L3), so a
    *  plain speed gate would stall into a visible in/out shimmer. A seated
    *  particle is re-seated regardless of speed and its OUTWARD velocity
-   *  component is cancelled — a one-sided groove-wall contact, purely
-   *  dissipative — and the seat releases only once the particle sits >4 px
-   *  INSIDE on its own (the yank is genuinely gone; a 0.5 s timer release
-   *  was tried first and breathed in/out at ~1 s period). The seat moves
-   *  x/y and px/py together, so it adds no velocity of its own. */
+   *  component is cancelled — the same one-sided groove-wall contact — and
+   *  the seat releases only once the particle sits >4 px INSIDE on its own
+   *  AND has calmed below 30 px/s (a fast pass through the deep interior is
+   *  the cable still oscillating, not a settled seat; releasing on depth
+   *  alone let a pinned snap fragment ratchet back out every half-cycle).
+   *  The seat moves x/y and px/py together, so it adds no velocity of its
+   *  own. */
   containPipes() {
     if (this.grabs.size > 0) return;
     const { ps } = this;
@@ -206,8 +212,8 @@ export class Session2D {
         const x = ps.x[p], y = ps.y[p];
         const inside = islands.some(poly => pointInPolygon(poly, x, y));
         if (inside && !seated) continue;
-        if (!inside && !seated && Math.hypot(ps.vx[p], ps.vy[p]) >= 30) continue;
-        // Nearest point on any island boundary.
+        // Nearest point on any island boundary — needed by the entry gate
+        // below too (its normal defines the outward direction).
         let bx = 0, by = 0, bd = Infinity;
         for (const poly of islands) {
           for (let i = 0, n = poly.length; i < n; i++) {
@@ -221,17 +227,22 @@ export class Session2D {
           }
         }
         if (inside) {
-          if (bd > 4) this.seated.delete(p); // holds deep inside on its own
+          // Deep inside AND slow: the yank is genuinely gone, release the
+          // seat. (Only seated particles reach here — see the early exit.)
+          if (seated && bd > 4 && Math.hypot(ps.vx[p], ps.vy[p]) < 30) this.seated.delete(p);
           continue;
         }
         if (bd > 24 || bd < 1e-6) { this.seated.delete(p); continue; }
+        const nx = (bx - x) / bd, ny = (by - y) / bd; // inward unit
+        const vOut = -(ps.vx[p] * nx + ps.vy[p] * ny); // outward speed
+        // Entry gate on the NORMAL component only: the groove wall is a
+        // one-sided contact, so tangential speed is irrelevant to seating.
+        if (!seated && vOut >= 30) continue;
         // Seat 2 px INSIDE along the outward->inward direction and cancel the
         // outward velocity component (one-sided contact, dissipative).
-        const nx = (bx - x) / bd, ny = (by - y) / bd; // inward unit
         const mx = bx + nx * 2 - x, my = by + ny * 2 - y;
         ps.x[p] += mx; ps.y[p] += my;
         ps.px[p] += mx; ps.py[p] += my;
-        const vOut = -(ps.vx[p] * nx + ps.vy[p] * ny); // outward speed
         if (vOut > 0) { ps.vx[p] += vOut * nx; ps.vy[p] += vOut * ny; }
         this.seated.add(p);
       }

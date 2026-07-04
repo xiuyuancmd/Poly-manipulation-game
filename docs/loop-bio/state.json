@@ -2,8 +2,17 @@
   "status": "running",
   "startedAt": "2026-07-04T22:05:00Z",
   "deadline": "2026-07-05T02:05:00Z",
-  "iteration": 1,
-  "phase": "evaluator",
-  "rubricHistory": [],
+  "iteration": 2,
+  "phase": "planner",
+  "rubricHistory": [
+    {
+      "iteration": 1,
+      "组织拉扯真实感": 7.5,
+      "阻尼与定形": 7.5,
+      "血管行为": 8.5,
+      "肌肉行为": 3.0,
+      "可玩性无回归": 8.5
+    }
+  ],
   "notes": "第二期：生物版物理真实感。材质档案架构，lab 逐位不变。"
 }

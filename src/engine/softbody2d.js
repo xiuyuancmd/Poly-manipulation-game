@@ -181,10 +181,17 @@ export class SoftBody2D {
     const count = Math.max(3, Math.round(len / spacing) + (pd.closed ? 0 : 1));
     const pts = resamplePolyline(pd.path, count, !!pd.closed);
     const parts = pts.map(p => this.addParticle(p.x, p.y));
+    // Active-muscle opts (bio contractile pipes only): slack = 1/restFactor is
+    // the fully-relaxed rest as a multiple of the contracted built length.
+    // Absent (lab, and every non-contractile pipe) => passive spring, bit-exact.
+    const actOpts = style.active
+      ? { active: { ...style.active, slack: 1 / style.restFactor } }
+      : undefined;
     const pipe = {
       id: nextPipeId++,
       type: pd.type ?? 'normal',
       props: style,
+      actOpts,
       parts,
       segCs: [],
       coupleCs: [],
@@ -202,7 +209,7 @@ export class SoftBody2D {
     for (let k = 0; k < segN; k++) {
       const a = parts[k], b = parts[(k + 1) % count];
       const rest = Math.hypot(ps.x[b] - ps.x[a], ps.y[b] - ps.y[a]) * restFactor;
-      pipe.segCs.push({ a, b, c: solver.add(new DistanceConstraint(a, b, rest, style.compliance)) });
+      pipe.segCs.push({ a, b, c: solver.add(new DistanceConstraint(a, b, rest, style.compliance, false, actOpts)) });
     }
     if (pipe.closed && pipe.type === 'pressure') {
       const area = Math.abs(ringSignedArea(ps, parts)) * (style.inflate ?? 1.5);
@@ -244,7 +251,7 @@ export class SoftBody2D {
     if (pipe.closed || pipe.type !== 'contractile' || pipe.parts.length < 3) return;
     const rest = pipe.segCs.reduce((s, e) => s + e.c.rest, 0);
     const a = pipe.parts[0], b = pipe.parts[pipe.parts.length - 1];
-    pipe.tieC = this.solver.add(new DistanceConstraint(a, b, rest, pipe.props.compliance));
+    pipe.tieC = this.solver.add(new DistanceConstraint(a, b, rest, pipe.props.compliance, false, pipe.actOpts));
   }
 
   /** Skip-2 bending springs along a chain, per material. Rebuilt after surgery. */
@@ -259,7 +266,7 @@ export class SoftBody2D {
     for (let k = 0; k < m; k++) {
       const a = parts[k], b = parts[(k + 2) % n];
       const rest = Math.hypot(ps.x[b] - ps.x[a], ps.y[b] - ps.y[a]) * pipe.props.restFactor;
-      pipe.bendCs.push({ a, b, c: solver.add(new DistanceConstraint(a, b, rest, bc)) });
+      pipe.bendCs.push({ a, b, c: solver.add(new DistanceConstraint(a, b, rest, bc, false, pipe.actOpts)) });
     }
   }
 
@@ -330,6 +337,8 @@ export class SoftBody2D {
       pipe.closed = false;
       this.buildPipeTie(pipe);
       this.buildPipeBends(pipe);
+      // A severed contractile ring goes limp along its whole length.
+      if (pipe.actOpts) this.denervatePipe(pipe);
       if (pipe.areaC) {
         this.solver.remove(pipe.areaC);
         pipe.areaC = null;
@@ -362,6 +371,10 @@ export class SoftBody2D {
       };
       this.buildPipeTie(np); // each fragment keeps contracting along itself
       this.buildPipeBends(np);
+      // Both severed contractile fragments are denervated: cutting a tendon
+      // kills its pull (the distal end goes slack; the proximal end's spasm is
+      // the session-layer cableRecoil velocity kick, which fades to limp).
+      if (np.actOpts) this.denervatePipe(np);
       return np;
     };
     const out = [];
@@ -406,6 +419,27 @@ export class SoftBody2D {
         }
       }
     }
+    // Active-muscle pass (bio contractile pipes): each fibre's activation and
+    // rest length migrate once per frame. update() carries no dt (the session
+    // steps at a fixed 1/60 s cadence — same clock as solver.step), so use it
+    // directly. lab pipes have props.active === undefined -> whole loop skipped,
+    // zero writes, bit-exact.
+    for (const pipe of this.pipes) {
+      if (!pipe.props.active || !pipe.alive) continue;
+      for (const s of pipe.segCs) s.c.updateActivation(this.ps, 1 / 60);
+      if (pipe.tieC) pipe.tieC.updateActivation(this.ps, 1 / 60);
+      for (const b of pipe.bendCs ?? []) b.c.updateActivation(this.ps, 1 / 60);
+    }
+  }
+
+  /** Denervate a severed contractile fragment: its fibres lose neural drive,
+   *  so their activation target is forced to 0 and they go limp (rest slackens
+   *  toward slack·rest0c, compliance softens). No-op on passive constraints. */
+  denervatePipe(pipe) {
+    const mark = (c) => { if (c && c._act) c._act.den = true; };
+    for (const s of pipe.segCs) mark(s.c);
+    if (pipe.tieC) mark(pipe.tieC);
+    for (const b of pipe.bendCs ?? []) mark(b.c);
   }
 
   // ---- queries --------------------------------------------------------------
@@ -454,6 +488,11 @@ export class SoftBody2D {
         // currentArea is SIGNED — take |.| before comparing with the target.
         fill: p.areaC
           ? clamp(Math.abs(p.areaC.currentArea(ps)) / p.areaC.targetArea, 0, 1.5)
+          : null,
+        // Mean fibre activation for the renderer (contractile pipes only):
+        // ~1 fully contracted, ->0 relaxed/denervated. null for passive pipes.
+        activation: (p.segCs.length && p.segCs[0].c._act)
+          ? p.segCs.reduce((s, e) => s + e.c._act.a, 0) / p.segCs.length
           : null,
       })),
     };

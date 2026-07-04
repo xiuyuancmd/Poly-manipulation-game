@@ -83,6 +83,12 @@ export class Session2D {
     // schedules anything.
     this.bleedCfg = phys?.bleed ?? null;
     this.bleeds = [];  // {island, to, jumps:[...], k, pipeId, x, y, dirX, dirY}
+    // Cable-recoil impulse: bio's active tendons store more pre-tension, so a
+    // cut fragment whips back harder (260 px/s tip vs lab's 220), making the
+    // denervation spasm legible. lab (no physics key) keeps the reference
+    // 220/250 numbers exactly.
+    this.recoilTip = phys ? 260 : 220;
+    this.recoilCap = phys ? 290 : 250;
     this.grabs = new Map();   // pointerId -> {anchor, particle}
     this.pins = new Set();    // particle indices
     // Cable-guide groove state (containPipes): seated particles and
@@ -629,8 +635,9 @@ export class Session2D {
 
   /** Find the (at most two) live contractile fragments whose freed end sits
    *  within 40 px of the cut, throw their 3–4 tip particles back along the
-   *  local chain tangent (220 px/s at the tip decaying to 60 px/s, capped at
-   *  250 px/s per particle) and hand a snapshot to the whip after-image. */
+   *  local chain tangent (recoilTip px/s at the tip decaying to 60 px/s, capped
+   *  at recoilCap px/s per particle — lab 220/250, bio 260/290) and hand a
+   *  snapshot to the whip after-image. */
   cableRecoil(x, y) {
     const { ps } = this;
     const frags = [];
@@ -664,11 +671,11 @@ export class Session2D {
         const tl = Math.hypot(tx, ty);
         if (tl < 1e-6) continue;
         tx /= tl; ty /= tl;
-        const v = 220 - (220 - 60) * (k / 3);
+        const v = this.recoilTip - (this.recoilTip - 60) * (k / 3);
         ps.vx[p] += tx * v;
         ps.vy[p] += ty * v;
         const sp = Math.hypot(ps.vx[p], ps.vy[p]);
-        if (sp > 250) { const f = 250 / sp; ps.vx[p] *= f; ps.vy[p] *= f; }
+        if (sp > this.recoilCap) { const f = this.recoilCap / sp; ps.vx[p] *= f; ps.vy[p] *= f; }
       }
       snapshots.push(parts.filter(i => ps.alive[i]).map(i => ({ x: ps.x[i], y: ps.y[i] })));
     }

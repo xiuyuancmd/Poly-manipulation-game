@@ -252,8 +252,13 @@ export const THEMES = {
           // J 形应力-应变：超过 15% 应变后胶原募集，柔度按 (1+4·excess²) 收紧。
           membraneHarden: { hardenK: 4, hardenOnset: 0.15 },
         },
-        // 按管型覆盖 PIPE_STYLES（本轮暂无覆盖；肌肉动态留后轮）。
-        pipeStyles: {},
+        // 按管型覆盖 PIPE_STYLES。收缩肌束（contractile）挂主动收缩动态：
+        //  riseK 2.0/s  强直上升 τ≈0.5s（探针：恒拉后 a 以 ~2/s 逼近目标）；
+        //  flK 1.2/flMin 0.35  力-长度：拉到 s≈1.8 稳态 a≈0.35（过拉发不出力）；
+        //  softK 1.5  活性软化：失神经(a→0)后柔度×(1+1.5)=2.5，肌腱瘫软；
+        //  slack 由 addPipe 用 1/restFactor 现算注入（contractile 0.58 → ≈1.724）。
+        // lab 无此键 => 引擎 _act=null、actSoftK=0，逐位不变。
+        pipeStyles: { contractile: { active: { riseK: 2.0, flK: 1.2, flMin: 0.35, softK: 1.5 } } },
         // 搏动性失血：切断承压环后，失压目标随心搏分 4 跳阶梯下调。
         bleed: { pulses: 4 },
       },

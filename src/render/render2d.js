@@ -79,6 +79,38 @@ function makeStrainRamp(base, white, s0, s1) {
   };
 }
 
+/** Quantized activation -> muscle colour ramp (bio contractile pipes only; lab
+ *  pipes report activation === null and never reach here). a→1 (contracted)
+ *  reads red-hot and bright; a→0 (relaxed / denervated) fades pale and limp.
+ *  Endpoints derive from the live pipe base colour so it tracks the palette. */
+function makeActivationRamp(base) {
+  const N = 16;
+  const cache = new Array(N + 1);
+  // Limp end: desaturated toward a pale flesh-grey. Hot end: reddened + brighter.
+  const slack = [
+    Math.round(base[0] * 0.5 + 212 * 0.5),
+    Math.round(base[1] * 0.45 + 200 * 0.55),
+    Math.round(base[2] * 0.45 + 198 * 0.55),
+  ];
+  const hot = [
+    Math.min(255, Math.round(base[0] + 54)),
+    Math.round(base[1] * 0.62),
+    Math.round(base[2] * 0.66),
+  ];
+  return (a) => {
+    const t = Math.min(1, Math.max(0, a));
+    const b = Math.round(t * N);
+    if (!cache[b]) {
+      const f = b / N;
+      const r = Math.round(slack[0] + (hot[0] - slack[0]) * f);
+      const g = Math.round(slack[1] + (hot[1] - slack[1]) * f);
+      const bl = Math.round(slack[2] + (hot[2] - slack[2]) * f);
+      cache[b] = `rgb(${r},${g},${bl})`;
+    }
+    return cache[b];
+  };
+}
+
 // Deflation desaturation: a body below rest pressure loses colour and gloss.
 // Four QUANTIZED tint steps (pressure >= 1.0 -> pristine, ~0.8 -> about 16%
 // desaturated/darker), all colours precomputed — no per-frame string churn.
@@ -93,12 +125,14 @@ function dimmedRgb([r, g, b], f) {
 // exactly: pipe #aab6c6=[170,182,198], bodyFill=[56,116,98], stroke
 // #7ee0c3=[126,224,195], highlight #e0fff5=[224,255,245].
 let pipeStrainColor;   // pipes whiten visibly once stretched past rest
+let pipeActivationColor; // contractile fibres: red-hot when active, pale/limp when denervated
 let PRESSURE_TINTS;    // per-pressure-step matrix fill + boundary edge ramp
 let HIGHLIGHT_RGB;     // 'r,g,b' string for the wet sheen / interior light
 let HIGHLIGHT_CACHE;   // quantized rgba() strings, keyed on alpha step
 
 function rebuildRamps() {
   pipeStrainColor = makeStrainRamp(parseRgb(COLORS.pipe), [246, 250, 253], 1.02, 1.45);
+  pipeActivationColor = makeActivationRamp(parseRgb(COLORS.pipe));
   const bodyBase = parseRgb(COLORS.bodyFill);
   const bodyAlpha = parseAlphaRaw(COLORS.bodyFill, '0.60');
   const edgeBase = parseRgb(COLORS.bodyStroke);
@@ -348,12 +382,16 @@ function drawPipes(ctx, pipes) {
     ctx.lineWidth = 6.5;
     tracePolyline(ctx, pts, pipe.closed);
     ctx.stroke();
-    // Pipe body, segment by segment: colour tracks the segment's real strain.
+    // Pipe body, segment by segment. Passive pipes (activation == null, all lab
+    // pipes) whiten with per-segment strain, bit-for-bit as before. Bio
+    // contractile fibres instead read their mean activation: red-hot when
+    // pulling, pale and limp once relaxed or severed (denervated).
     ctx.lineWidth = 4.4;
     const segN = pipe.segStrains.length;
+    const actColor = pipe.activation != null ? pipeActivationColor(pipe.activation) : null;
     for (let k = 0; k < segN; k++) {
       const a = pts[k], b = pts[(k + 1) % n];
-      ctx.strokeStyle = pipeStrainColor(pipe.segStrains[k]);
+      ctx.strokeStyle = actColor ?? pipeStrainColor(pipe.segStrains[k]);
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
       ctx.lineTo(b.x, b.y);

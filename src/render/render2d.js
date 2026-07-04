@@ -342,14 +342,34 @@ function drawWetHighlight(ctx, island, inw, pressure) {
     if (len < 1e-6) continue;
     const nx = (-dy / len) * inw, ny = (dx / len) * inw; // inward
     const facing = -nx * LIGHT_X - ny * LIGHT_Y;         // outward · light
-    if (facing < 0.35) continue;
+    if (facing < 0.28) continue;
     const s = island.edgeStrains[k] ?? 1;
     const alpha = Math.min(0.6,
-      0.10 + (facing - 0.35) * 0.5 + Math.max(0, s - 1) * 1.5) * gloss;
+      0.14 + (facing - 0.28) * 0.5 + Math.max(0, s - 1) * 1.5) * gloss;
     ctx.strokeStyle = highlightColor(alpha);
     ctx.beginPath();
     ctx.moveTo(a.x + nx * 2.6, a.y + ny * 2.6);
     ctx.lineTo(b.x + nx * 2.6, b.y + ny * 2.6);
+    ctx.stroke();
+  }
+  // Second sheen band: a broad, faint glaze 6 px inside the light-facing rim
+  // (facing > 0.45) — the soft body of the specular smear on a cast gel
+  // surface. Same quantized colour cache; fades with the island's gloss, so
+  // it dies with a deflation like the rim line does.
+  const bandColor = highlightColor(0.10 * gloss);
+  ctx.lineWidth = 4.5;
+  ctx.strokeStyle = bandColor;
+  for (let k = 0; k < n; k++) {
+    const a = pts[k], b = pts[(k + 1) % n];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-6) continue;
+    const nx = (-dy / len) * inw, ny = (dx / len) * inw;
+    const facing = -nx * LIGHT_X - ny * LIGHT_Y;
+    if (facing < 0.45) continue;
+    ctx.beginPath();
+    ctx.moveTo(a.x + nx * 6, a.y + ny * 6);
+    ctx.lineTo(b.x + nx * 6, b.y + ny * 6);
     ctx.stroke();
   }
 }

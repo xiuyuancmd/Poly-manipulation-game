@@ -207,10 +207,13 @@ test('bio 物理下 L2 目标二「软枕头」：切血管白嫖不过，认真
   assert.ok(score >= cutoff, `bio author solve ${score.toFixed(1)} >= ${cutoff}`);
 });
 
-test('bio 物理下 L3 目标一「平板」作者解过 cutoff', () => {
+test('bio 物理下 L3 目标一「平板」作者解过 cutoff（主动肌肉不阻断可达性）', () => {
+  // 主动收缩肌束会主动把两端拽拢，作者解须"顶着肌腱"绷平肌片。第 2 轮探针
+  // 94.1（第 1 轮被动 89.5→主动 94.1）。显式设 ≥85 回归地板，独立于 cutoff。
   const score = authorSolve(level03, 0, { frames: 1800, gripFrames: 300 });
   const cutoff = level03.targets[0].cutoff ?? level03.cutoff;
   assert.ok(score >= cutoff, `bio author solve ${score.toFixed(1)} >= ${cutoff}`);
+  assert.ok(score >= 85, `L3-1 主动肌肉下维持 ≥85（实测 ${score.toFixed(1)}）`);
 });
 
 // ---- numeric stability under abuse ------------------------------------------
@@ -261,4 +264,46 @@ test('bio 稳定性：3 点随机 1200px 暴力拖拽 600+ 帧不 NaN 不爆炸�
   };
   for (const isl of body.aliveIslands()) isl.edgeCs.forEach((e, k) => checkRest(e.c, `edge#${k}`));
   body.latticeCs.forEach((e, k) => checkRest(e.c, `lattice#${k}`));
+});
+
+test('bio 稳定性：L3 主动肌肉下 3 点 1200px 暴力拖拽 600 帧含活性 pass 不 NaN，肌腱 rest 不越界', () => {
+  const { ps, solver, body } = bioBuild(level03);
+  const rng = makeRng(9001);
+  const owned = [...body.owned].filter(i => ps.alive[i]);
+  const anchors = [];
+  for (let k = 0; k < 3; k++) {
+    const p = owned[Math.floor(rng() * owned.length)];
+    anchors.push(solver.add(new AnchorConstraint(p, ps.x[p], ps.y[p], 0, 1e-4)));
+  }
+  const cx = 480, cy = 320;
+  const checkTendonRest = (f) => {
+    for (const pipe of body.pipes) {
+      if (!pipe.alive) continue;
+      const segs = [...pipe.segCs.map(s => s.c), pipe.tieC, ...(pipe.bendCs ?? []).map(b => b.c)];
+      for (const c of segs) {
+        if (!c || !c._act) continue;
+        const lo = c._act.rest0c - 1e-9, hi = c._act.slack * c._act.rest0c + 1e-9;
+        assert.ok(Number.isFinite(c.rest), `肌腱 rest finite (f=${f})`);
+        assert.ok(c.rest >= lo && c.rest <= hi,
+          `肌腱 rest=${c.rest.toFixed(2)} ∈ [${lo.toFixed(2)}, ${hi.toFixed(2)}] (f=${f})`);
+      }
+    }
+  };
+  for (let f = 0; f < 600; f++) {
+    if (f % 40 === 0) {
+      for (const a of anchors) a.setTarget(cx + (rng() * 2 - 1) * 1200, cy + (rng() * 2 - 1) * 1200);
+    }
+    solver.step(DT);
+    body.update(); // 含主动肌肉活性 pass
+    if (f % 100 === 99) {
+      for (const i of body.owned) {
+        if (!ps.alive[i]) continue;
+        assert.ok(Number.isFinite(ps.x[i]) && Number.isFinite(ps.y[i]), `粒子 ${i} finite (f=${f})`);
+        assert.ok(Math.abs(ps.x[i]) < 6000 && Math.abs(ps.y[i]) < 6000, `粒子 ${i} 不飞出 6000px (f=${f})`);
+      }
+      checkTendonRest(f);
+    }
+  }
+  // 收尾再核一次肌腱 rest 夹取带。
+  checkTendonRest(600);
 });

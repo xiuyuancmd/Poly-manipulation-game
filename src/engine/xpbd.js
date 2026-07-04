@@ -45,7 +45,19 @@ export class ParticleSystem {
  *    hardenK/hardenOnset — J-curve collagen recruitment: above `hardenOnset`
  *                strain the effective compliance divides by
  *                (1 + hardenK·excess²), so large stretches lock up.
- *  relax() is only ever called when the owning Solver has viscoelastic=true. */
+ *  relax() is only ever called when the owning Solver has viscoelastic=true.
+ *
+ *  Optional ACTIVE contraction (muscle) opts.active (default absent = passive
+ *  spring, bit-exact legacy behaviour). When present the constraint is a
+ *  contractile fibre driven once per frame by updateActivation():
+ *    riseK   1/s — tetanic rise rate of activation a toward its force-length
+ *                target (τ ≈ 1/riseK); a∈[0,1], built a=1 (pre-tensioned);
+ *    flK, flMin  — force-length falloff: over-stretched fibres can't pull
+ *                (aStar = clamp(1 − flK·max(0, s−1), flMin, 1), s=len/rest0c);
+ *    softK   — activation softening: solve() multiplies compliance by
+ *                (1 + softK·(1 − a)), so a relaxed/denervated fibre goes limp;
+ *    slack   1/restFactor — the fully-relaxed rest as a multiple of rest0c.
+ *  `rest` migrates between rest0c (a=1, contracted) and slack·rest0c (a=0). */
 export class DistanceConstraint {
   constructor(i, j, rest, compliance = 0, unilateral = false, opts = {}) {
     this.i = i; this.j = j;
@@ -61,6 +73,25 @@ export class DistanceConstraint {
     this.restHi = opts.restHi ?? 2.0;
     this.hardenK = opts.hardenK ?? 0;
     this.hardenOnset = opts.hardenOnset ?? 0;
+    // Active contraction state: null unless opts.active is supplied (bio
+    // contractile pipes only). `rest` is the contracted built length (already
+    // ×restFactor); slack·rest0c is the fully-relaxed length. den = denervated
+    // (severed distal fragment goes limp: activation target forced to 0).
+    if (opts.active) {
+      this._act = {
+        rest0c: rest,
+        slack: opts.active.slack,
+        a: 1,
+        den: false,
+        riseK: opts.active.riseK ?? 0,
+        flK: opts.active.flK ?? 0,
+        flMin: opts.active.flMin ?? 0,
+      };
+      this.actSoftK = opts.active.softK ?? 0;
+    } else {
+      this._act = null;
+      this.actSoftK = 0;
+    }
   }
 
   solve(ps, h) {
@@ -79,6 +110,9 @@ export class DistanceConstraint {
       const excess = Math.max(0, len / this.rest - 1 - this.hardenOnset);
       compliance = this.compliance / (1 + this.hardenK * excess * excess);
     }
+    // Active softening: a relaxed / denervated muscle fibre (a -> 0) goes limp.
+    // actSoftK = 0 (all passive constraints) takes the exact legacy arithmetic.
+    if (this.actSoftK) compliance *= (1 + this.actSoftK * (1 - this._act.a));
     const alphaT = compliance / (h * h);
     const dl = -C / (w + alphaT);
     dx /= len; dy /= len; dz /= len;
@@ -105,6 +139,34 @@ export class DistanceConstraint {
     const lo = this.restLo * this.rest0, hi = this.restHi * this.rest0;
     if (this.rest < lo) this.rest = lo;
     else if (this.rest > hi) this.rest = hi;
+  }
+
+  /** Active-contraction rest migration (once per FRAME, driven by the body's
+   *  update() for bio contractile pipes). No-op unless opts.active was given.
+   *    s     = len / rest0c (strain against the CONTRACTED built length);
+   *    aStar = den ? 0 : clamp(1 − flK·max(0, s−1), flMin, 1)  (force-length);
+   *    a    += (aStar − a)·min(1, riseK·dt)                    (tetanic rise);
+   *    rest  = rest0c·(slack − a·(slack−1)), clamped to [rest0c, slack·rest0c].
+   *  a→1 pulls `rest` to the contracted length; a→0 lets it slacken. */
+  updateActivation(ps, dt) {
+    if (!this._act) return;
+    const act = this._act;
+    const rest0c = act.rest0c;
+    if (rest0c < 1e-9) return;
+    const len = Math.hypot(
+      ps.x[this.j] - ps.x[this.i],
+      ps.y[this.j] - ps.y[this.i],
+      ps.z[this.j] - ps.z[this.i],
+    );
+    const s = len / rest0c;
+    const aStar = act.den ? 0 : Math.min(1, Math.max(act.flMin, 1 - act.flK * Math.max(0, s - 1)));
+    act.a += (aStar - act.a) * Math.min(1, act.riseK * dt);
+    const slack = act.slack;
+    let rest = rest0c * (slack - act.a * (slack - 1));
+    const hi = slack * rest0c;
+    if (rest < rest0c) rest = rest0c;
+    else if (rest > hi) rest = hi;
+    this.rest = rest;
   }
 
   currentStrain(ps) {

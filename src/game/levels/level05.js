@@ -19,7 +19,7 @@ export default {
   pipes: [
     { path: line(CX - 75, CY, CX + 75, CY, 6), type: 'rigid' },
     { path: line(CX - 50, CY - 70, CX + 50, CY - 70, 5), type: 'contractile' },
-    { path: circle(CX - 45, CY + 45, 30, 14), type: 'pressure', overrides: { bodyInflation: 0.35 }, closed: true },
+    { path: circle(CX - 36, CY + 36, 28, 14), type: 'pressure', overrides: { bodyInflation: 0.35 }, closed: true },
   ],
   targets: [
     {
@@ -29,7 +29,7 @@ export default {
       pipes: [
         { points: line(CX - 75, CY, CX + 75, CY, 6), closed: false },
         { points: line(CX - 32, CY - 75, CX + 32, CY - 75, 4), closed: false },
-        { points: circle(CX - 50, CY + 50, 37, 16), closed: true },
+        { points: circle(CX - 41, CY + 41, 34, 16), closed: true },
       ],
       hint: '先把试件揉圆。顺便试探一下每根管路的物性。',
       moreHints: [
@@ -43,7 +43,7 @@ export default {
       pipes: [
         { points: line(CX - 75, CY, CX + 75, CY, 6), closed: false },
         { points: line(CX - 32, CY - 45, CX + 32, CY - 45, 4), closed: false },
-        { points: arc(CX - 48, CY + 42, 32, 0.8, 5.5, 8), closed: false },
+        { points: arc(CX - 39, CY + 33, 30, 0.8, 5.5, 8), closed: false },
       ],
       weights: { outline: 0.7, pipes: 0.3 },
       hint: '左下角埋着一个气囊。给它泄压，但别切到别的管路。',

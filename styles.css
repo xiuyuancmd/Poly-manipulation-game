@@ -93,7 +93,15 @@ button:hover { background: #2e3846; }
 #bar-outline { background: #7ee0c3 !important; }
 
 #cutoff-label { font-size: 11px; color: #67748a; text-align: center; }
-#topo-warn { font-size: 12px; color: #ffb35c; text-align: center; }
+#topo-warn { font-size: 12px; color: #ffb35c; text-align: center; border-radius: 6px; padding: 2px 0; }
+/* One-shot attention flash on the ok -> broken transition: 3 blinks in ~1 s,
+   runs exactly once (never infinite); the .flash class is removed on
+   animationend. */
+#topo-warn.flash { animation: topo-flash 1.05s ease-out 1; }
+@keyframes topo-flash {
+  0%, 34%, 68% { color: #ff5c5c; background: rgba(255,92,92,0.22); }
+  17%, 51%, 100% { color: #ffb35c; background: transparent; }
+}
 #hint-text { font-size: 12px; color: #aab6c6; line-height: 1.5; min-height: 34px; }
 
 /* ---- toolbar ---- */

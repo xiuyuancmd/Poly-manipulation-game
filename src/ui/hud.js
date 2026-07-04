@@ -37,7 +37,7 @@ export class HUD {
             <div class="bar-row"><span>管道</span><div class="bar"><div id="bar-pipes"></div></div></div>
           </div>
           <div id="cutoff-label"></div>
-          <div id="topo-warn" class="hidden">⚠ 管道结构不符</div>
+          <div id="topo-warn" class="hidden">⚠ 管路结构不符 · 读数被压至 25%</div>
           <div id="hint-text"></div>
         </div>
         <div id="toolbar" class="hidden">
@@ -88,6 +88,10 @@ export class HUD {
       b.onclick = () => cb.onTool(b.dataset.tool);
     }
     this._toastTimer = null;
+    // Topology-warning attention flash: one-shot on the ok -> broken edge.
+    this._topoOk = true;
+    this.els.topoWarn.addEventListener('animationend',
+      () => this.els.topoWarn.classList.remove('flash'));
   }
 
   showMenu(levels, progress) {
@@ -136,7 +140,16 @@ export class HUD {
     this.els.barOutline.style.width = `${Math.round(sim?.outline ?? 0)}%`;
     this.els.barPipes.style.width = `${Math.round(sim?.pipes ?? 0)}%`;
     this.els.ringHold.style.strokeDashoffset = ((1 - Math.min(1, holdFrac)) * RING_C).toFixed(1);
-    this.els.topoWarn.classList.toggle('hidden', sim?.topologyOk !== false);
+    const topoBad = sim?.topologyOk === false;
+    this.els.topoWarn.classList.toggle('hidden', !topoBad);
+    if (topoBad && this._topoOk) {
+      // ok/unknown -> broken transition: flash the warning once (~1 s, the
+      // CSS animation runs a fixed 3 blinks and stops — never infinite).
+      this.els.topoWarn.classList.remove('flash');
+      void this.els.topoWarn.offsetWidth; // restart if a flash was mid-flight
+      this.els.topoWarn.classList.add('flash');
+    }
+    this._topoOk = !topoBad;
   }
 
   setControls(used, max) {

@@ -10,7 +10,7 @@ export default {
   dim: 3,
   timeLimit: 240,
   cutoff: 78,
-  intro: '拖动顶点感受它的弹性；拖住空白处可以转动视角。',
+  intro: '拖动顶点感受它的弹性；拖住空白处可以转动视角。读数先别急。',
   body3d: { size: S, segments: 4, pressure: 1.0 },
   pipes3d: [
     { from: [-S / 2 + 8, -S / 2 + 8, -S / 2 + 8], to: [S / 2 - 8, S / 2 - 8, S / 2 - 8], count: 9 },
@@ -27,7 +27,7 @@ export default {
       ],
       topology: { chains: 2, loops: 0 },
       weights: { outline: 0.8, pipes: 0.2 },
-      hint: '里面那根斜撑不断，它就压不扁。切割工具点管道试试。',
+      hint: '开局读数只有十几分是正常的——斜撑没剪断，「管路结构不符」会把读数压到四分之一。按 2 换切割工具，对准斜撑点一下。',
       moreHints: [
         { t: 40, text: '换切割工具（按 2），对准那根斜撑点一下。' },
         { t: 85, text: '剪断后：钉住底面，抓顶面往下压扁，跟着虚线框走。' },

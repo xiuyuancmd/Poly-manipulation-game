@@ -30,7 +30,7 @@ export default {
       pipes: [{ points: circle(CX, CY, 67, 24), closed: true }],
       hint: '内部气压让它保持鼓胀——轻轻按两下就能凑出形状。',
       moreHints: [
-        { t: 40, text: '抓住上下两侧往里按，把它压成横躺的凸壳。' },
+        { t: 20, text: '抓住上下两侧往里按，把它压成横躺的凸壳。' },
         { t: 80, text: '双击可以钉住一个点，腾出手来压另一边。' },
       ],
     },

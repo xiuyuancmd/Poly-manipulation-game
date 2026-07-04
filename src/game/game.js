@@ -8,6 +8,7 @@ import { Session2D, MAX_CONTROLS } from './session2d.js';
 import { Session3D } from './session3d.js';
 import { HUD } from '../ui/hud.js';
 import { levels } from './levels/index.js';
+import { unlock as unlockAudio, sfx } from '../audio/sfx.js';
 
 const SIM_INTERVAL = 0.1;   // seconds between similarity evaluations
 const HOLD_SECONDS = 3.0;   // keep score above cutoff this long to bank a target
@@ -84,6 +85,9 @@ export class Game {
     this.targetTime = 0;
     this.hintQueue = [...(def.targets[0].moreHints ?? [])];
     this._cutTipShown = false;
+    this._holdTipShown = false;
+    this.topoBadT = 0;
+    this._topoWarned = false;
     this.setTool('pull');
     this.state = 'playing';
     this.hud.showGame(`${i + 1} · ${def.name}`);
@@ -136,6 +140,12 @@ export class Game {
           this.simT = 0;
           this.sim = this.session.evaluate(this.targetIdx);
           this.bestTotal = Math.max(this.bestTotal, this.sim.total);
+          if (this.sim.topologyOk === false) {
+            this.topoBadT += SIM_INTERVAL;
+            this.checkTopoDeadlock();
+          } else {
+            this.topoBadT = 0;
+          }
           this.updateHold();
         }
       }
@@ -156,9 +166,32 @@ export class Game {
     requestAnimationFrame(t => this.loop(t));
   }
 
+  /** Soft-lock detection: if the pipe topology has been wrong for a while AND
+   *  can never be repaired (cuts only ever destroy loops and multiply chains;
+   *  nothing rebuilds them), say so once instead of letting the player grind
+   *  an unreachable target. */
+  checkTopoDeadlock() {
+    if (this.topoBadT < 5 || this._topoWarned) return;
+    const st = this.session.state?.().topology;
+    const need = this.session.specs[this.targetIdx]?.topology;
+    if (!st || !need) return;
+    if (st.loops < need.loops || st.chains > need.chains) {
+      this._topoWarned = true;
+      const msg = '管路拓扑已不可恢复，本目标无法达成——按 R 重开试件';
+      this.hud.toast(msg, 6000);
+      this.hud.setHint(msg);
+    }
+  }
+
   updateHold() {
     const cutoff = this.cutoff();
     if (this.sim.total >= cutoff) {
+      // First time the readout ever crosses the line this level: teach the
+      // hold rule at the exact moment it matters.
+      if (this.hold === 0 && !this._holdTipShown) {
+        this._holdTipShown = true;
+        this.hud.toast('读数越线了——保持住 3 秒！');
+      }
       this.hold += SIM_INTERVAL;
       if (this.hold >= HOLD_SECONDS) this.completeTarget();
     } else if (this.sim.total < cutoff - HYSTERESIS) {
@@ -170,6 +203,7 @@ export class Game {
   completeTarget() {
     this.state = 'banner';
     this.bannerT = BANNER_SECONDS;
+    sfx.chime();
     this.hud.banner(`目标「${this.session.specs[this.targetIdx].name}」达成 ✔`);
   }
 
@@ -178,6 +212,8 @@ export class Game {
     this.hold = 0;
     this.sim = null;
     this.bestTotal = 0;
+    this.topoBadT = 0;
+    this._topoWarned = false;
     if (this.targetIdx >= this.def.targets.length) return this.win();
     this.state = 'playing';
     this.targetTime = 0;
@@ -211,6 +247,17 @@ export class Game {
   handleEvents() {
     const events = this.session.drainEvents();
     if (events.length === 0) return;
+    for (const e of events) this.session.effects?.spawnFromEvent(e);
+    // Event -> one-shot sfx (deduped per batch so one knife stroke that severs
+    // several segments doesn't stack the same transient).
+    const played = new Set();
+    const play = name => { if (!played.has(name)) { played.add(name); sfx[name](); } };
+    for (const e of events) {
+      if (e.type === 'deflate') play('hiss');
+      else if (e.type === 'pipeCut') play(e.pipeType === 'contractile' ? 'twang' : 'snip');
+      else if (e.type === 'snap') play('crack');
+      else if (e.type === 'rejected') play('thud');
+    }
     for (const e of events) {
       if (e.type === 'hint') this.hud.toast(e.text);
     }
@@ -230,6 +277,7 @@ export class Game {
       };
     };
     this.canvas.addEventListener('pointerdown', e => {
+      unlockAudio(); // AudioContext must be born inside a user gesture
       if (this.state !== 'playing' || !this.session) return;
       const { x, y } = pos(e);
       if (this.session.pointerDown(this.tool, x, y, e.pointerId)) {

@@ -6,6 +6,7 @@ import { ParticleSystem, Solver, AnchorConstraint } from '../engine/xpbd.js';
 import { SoftBody3D } from '../engine/softbody3d.js';
 import { TargetSpec3D, evaluate3D } from '../engine/similarity3d.js';
 import { Camera3D, drawScene3D } from '../render/render3d.js';
+import { Effects } from '../render/effects.js';
 import { MAX_CONTROLS } from './session2d.js';
 
 const PICK_RADIUS = 22;   // px
@@ -21,8 +22,16 @@ export class Session3D {
     for (const pd of def.pipes3d ?? []) this.body.addPipe(pd);
     this.body.settle(150);
     this.body.drainEvents();
+    // Workbench datum: the settled centroid. Drives the idle re-centering in
+    // step(). Translation only — a 3D despin/rotate-home needs the full
+    // inertia tensor and is out of this round's budget.
+    this.restCentroid = this.body.centroid();
     this.specs = def.targets.map(t => new TargetSpec3D(t));
     this.camera = new Camera3D(canvas.width, canvas.height);
+    // Screen-space effect particles (fracture sparks at pipe cuts). The 3D
+    // pipeCut event carries no coordinates, so the cut branch projects the
+    // severed segment's midpoint itself and feeds Effects directly.
+    this.effects = new Effects();
     this.grabs = new Map();   // pointerId -> {vertex, anchors:[{c,ox,oy,oz}], plane}
     this.pins = new Set();
     this.orbit = null;
@@ -41,6 +50,27 @@ export class Session3D {
       this.solver.step(1 / 60);
       this.body.update();
       this.accumulator -= 1 / 60;
+    }
+    this.effects.update(dt);
+    // Workbench anchoring (translation only, same contract as 2D): with no
+    // live controls, glide the whole specimen back to its settled centroid at
+    // max(60, 0.9·d) units/s, clamped to d. Moving x/y/z AND px/py/pz
+    // uniformly leaves every constraint residual and velocity untouched.
+    if (this.grabs.size === 0 && this.pins.size === 0 && this.restCentroid) {
+      const c = this.body.centroid();
+      const dx = this.restCentroid.x - c.x;
+      const dy = this.restCentroid.y - c.y;
+      const dz = this.restCentroid.z - c.z;
+      const d = Math.hypot(dx, dy, dz);
+      if (d > 0.5) {
+        const s = Math.min(d, Math.max(60, 0.9 * d) * dt) / d;
+        const { ps } = this;
+        for (const i of this.body.owned) {
+          if (!ps.alive[i]) continue;
+          ps.x[i] += dx * s; ps.y[i] += dy * s; ps.z[i] += dz * s;
+          ps.px[i] += dx * s; ps.py[i] += dy * s; ps.pz[i] += dz * s;
+        }
+      }
     }
   }
 
@@ -104,6 +134,15 @@ export class Session3D {
     if (tool === 'cut') {
       const hit = this.pickPipeSegment(x, y);
       if (hit) {
+        // Fracture sparks at the break: take the segment midpoint BEFORE the
+        // surgery mutates the pipe, project it to the screen, feed Effects.
+        const s = hit.pipe.segCs[hit.k];
+        const p = this.camera.project(
+          (this.ps.x[s.a] + this.ps.x[s.b]) / 2,
+          (this.ps.y[s.a] + this.ps.y[s.b]) / 2,
+          (this.ps.z[s.a] + this.ps.z[s.b]) / 2,
+        );
+        if (p) this.effects.spawnSparks(p.sx, p.sy);
         this.body.severPipeSegment(hit.pipe, hit.k);
         this.body.emit('snip');
       } else {

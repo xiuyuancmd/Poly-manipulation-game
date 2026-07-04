@@ -70,6 +70,7 @@ export class HUD {
       topbar: this.$('#topbar'), sidepanel: this.$('#sidepanel'), toolbar: this.$('#toolbar'),
       levelName: this.$('#level-name'), timer: this.$('#timer'), progress: this.$('#target-progress'),
       targetName: this.$('#target-name'), preview: this.$('#target-preview'),
+      gauge: this.$('#gauge'),
       scoreNum: this.$('#score-num'), ringHold: this.$('#ring-hold'),
       barOutline: this.$('#bar-outline'), barPipes: this.$('#bar-pipes'),
       cutoffLabel: this.$('#cutoff-label'), topoWarn: this.$('#topo-warn'), hint: this.$('#hint-text'),
@@ -92,6 +93,17 @@ export class HUD {
     this._topoOk = true;
     this.els.topoWarn.addEventListener('animationend',
       () => this.els.topoWarn.classList.remove('flash'));
+    // Gauge lock-in flash: one-shot on target completion, self-removing.
+    this.els.gauge.addEventListener('animationend',
+      () => this.els.gauge.classList.remove('locked'));
+  }
+
+  /** One-shot "reading locked" flash on the gauge (0.6 s, runs exactly once;
+   *  the class removes itself on animationend). */
+  gaugeLock() {
+    this.els.gauge.classList.remove('locked');
+    void this.els.gauge.offsetWidth; // restart if a flash was mid-flight
+    this.els.gauge.classList.add('locked');
   }
 
   showMenu(levels, progress) {

@@ -88,6 +88,10 @@ export class Game {
     this._holdTipShown = false;
     this.topoBadT = 0;
     this._topoWarned = false;
+    this._topoWasBad = false;
+    this._topoFixedShown = false;
+    this.awayT = 0;
+    this._awayToastShown = false;
     this.setTool('pull');
     this.state = 'playing';
     this.hud.showGame(`${i + 1} · ${def.name}`);
@@ -133,6 +137,17 @@ export class Game {
         this.hud.setHint(h.text);
         this.hud.toast(h.text, 4200);
       }
+      // Flung-specimen reassurance: if the piece's centroid stays out of frame
+      // for 2 s, tell the player it is gliding home (once per target).
+      if (this.specimenAway()) {
+        this.awayT += dt;
+        if (this.awayT >= 2 && !this._awayToastShown) {
+          this._awayToastShown = true;
+          this.hud.toast('试件正在归位——稍候，或按 R 立即复位', 3200);
+        }
+      } else {
+        this.awayT = 0;
+      }
       if (this.timeLeft <= 0) this.lose();
       else {
         this.simT += dt;
@@ -142,8 +157,16 @@ export class Game {
           this.bestTotal = Math.max(this.bestTotal, this.sim.total);
           if (this.sim.topologyOk === false) {
             this.topoBadT += SIM_INTERVAL;
+            this._topoWasBad = true;
             this.checkTopoDeadlock();
           } else {
+            // Broken -> matching transition: the cut that just landed made the
+            // pipe layout agree with the spec — say so once per target.
+            if (this._topoWasBad && this.sim.topologyOk === true && !this._topoFixedShown) {
+              this._topoFixedShown = true;
+              this.hud.toast('管路结构对上了——照着虚线框继续塑形');
+            }
+            this._topoWasBad = false;
             this.topoBadT = 0;
           }
           this.updateHold();
@@ -164,6 +187,20 @@ export class Game {
       this.session.render(this.ctx, { ghost });
     }
     requestAnimationFrame(t => this.loop(t));
+  }
+
+  /** Is the specimen's centre of mass out of the workbench frame? 2D: canvas
+   *  is 960x640 world units, with a generous margin. 3D: the cube (size ~220)
+   *  orbits the origin at camera distance 640 — beyond 480 units it reads as
+   *  "gone". */
+  specimenAway() {
+    if (!this.session) return false;
+    if (this.session.dim === 3) {
+      const c = this.session.body.centroid();
+      return Math.hypot(c.x, c.y, c.z) > 480;
+    }
+    const m = this.session.measureBody();
+    return m.n > 0 && (m.cx < -60 || m.cx > 1020 || m.cy < -60 || m.cy > 700);
   }
 
   /** Soft-lock detection: if the pipe topology has been wrong for a while AND
@@ -204,7 +241,8 @@ export class Game {
     this.state = 'banner';
     this.bannerT = BANNER_SECONDS;
     sfx.chime();
-    this.hud.banner(`目标「${this.session.specs[this.targetIdx].name}」达成 ✔`);
+    this.hud.gaugeLock();
+    this.hud.banner(`检验通过 · 目标「${this.session.specs[this.targetIdx].name}」已锁定`);
   }
 
   nextTarget() {
@@ -214,6 +252,10 @@ export class Game {
     this.bestTotal = 0;
     this.topoBadT = 0;
     this._topoWarned = false;
+    this._topoWasBad = false;
+    this._topoFixedShown = false;
+    this.awayT = 0;
+    this._awayToastShown = false;
     if (this.targetIdx >= this.def.targets.length) return this.win();
     this.state = 'playing';
     this.targetTime = 0;

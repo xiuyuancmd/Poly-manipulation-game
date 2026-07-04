@@ -79,28 +79,52 @@ export class Effects {
   }
 
   /** Cable recoil after-image: fading, thinning snapshots of the severed
-   *  fragments' polylines (0.3 s one-shot; polylines are copied). */
+   *  fragments' polylines (0.45 s one-shot; polylines are copied). */
   spawnWhip(polylines) {
     for (const pts of polylines ?? []) {
       if (!pts || pts.length < 2) continue;
-      this.whips.push({ pts: pts.map(p => ({ x: p.x, y: p.y })), age: 0, life: 0.3 });
+      this.whips.push({ pts: pts.map(p => ({ x: p.x, y: p.y })), age: 0, life: 0.45 });
     }
   }
 
-  /** snap: 6–10 dark shards scattering from the break point. */
+  /** snap: 14–18 dark shards scattering from the break point, falling under
+   *  gravity onto a per-particle virtual micro-facet 12–22 px below the spawn
+   *  (seeded); ONE damped bounce there, the second contact snuffs the shard.
+   *  Everything dead within 0.65 s. */
   spawnDebris(x, y) {
     const rng = makeRng(this.seed(x, y));
-    const n = 6 + Math.floor(rng() * 5);
+    const n = 14 + Math.floor(rng() * 5);
     for (let i = 0; i < n; i++) {
       const ang = rng() * TAU;
       const sp = 70 + rng() * 130;
       this.sparks.push({
         x, y,
         vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
-        age: 0, life: 0.3 + rng() * 0.3,
+        age: 0, life: 0.35 + rng() * 0.3,
         size: 1.4 + rng() * 1.8,
         color: 'rgb(30,41,38)',
         drag: 1.6,
+        ay: 600,
+        floor: y + 12 + rng() * 10,
+        bounced: false,
+      });
+    }
+  }
+
+  /** Fracture sparks (3D pipe snip): 6–8 bright blue-white 2 px streaks. */
+  spawnSparks(x, y) {
+    const rng = makeRng(this.seed(x, y));
+    const n = 6 + Math.floor(rng() * 3);
+    for (let i = 0; i < n; i++) {
+      const ang = rng() * TAU;
+      const sp = 120 + rng() * 140;
+      this.sparks.push({
+        x, y,
+        vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
+        age: 0, life: 0.25 + rng() * 0.2,
+        size: 2,
+        color: rng() < 0.5 ? 'rgb(214,238,255)' : 'rgb(255,255,255)',
+        drag: 3.2,
       });
     }
   }
@@ -142,7 +166,16 @@ export class Effects {
       if (p.age >= p.life) continue;
       const k = Math.max(0, 1 - p.drag * dt);
       p.vx *= k; p.vy *= k;
+      if (p.ay) p.vy += p.ay * dt;
       p.x += p.vx * dt; p.y += p.vy * dt;
+      // Virtual micro-facet under debris: one damped bounce, then snuff on
+      // the second contact (deterministic — floor was seeded at spawn).
+      if (p.floor != null && p.y >= p.floor && p.vy > 0) {
+        if (p.bounced) continue; // second touch: dead, don't keep
+        p.bounced = true;
+        p.y = p.floor;
+        p.vy = -p.vy * 0.4;
+      }
       sparks[w++] = p;
     }
     sparks.length = w;
@@ -165,12 +198,13 @@ export class Effects {
       ctx.lineTo(p.x - p.vx * 0.035, p.y - p.vy * 0.035);
       ctx.stroke();
     }
-    // Cable-recoil after-images: fading, thinning polyline snapshots.
+    // Cable-recoil after-images: fading, thinning polyline snapshots in a
+    // bright cyan-white (reads against the matrix green even at speed).
     for (const wp of this.whips) {
       const f = Math.max(0, 1 - wp.age / wp.life);
-      ctx.globalAlpha = f * 0.55;
-      ctx.strokeStyle = 'rgb(226,234,245)';
-      ctx.lineWidth = 1 + 2 * f; // 3 -> 1
+      ctx.globalAlpha = f * 0.8;
+      ctx.strokeStyle = 'rgb(200,255,240)';
+      ctx.lineWidth = 1 + 3 * f; // 4 -> 1
       ctx.beginPath();
       wp.pts.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
       ctx.stroke();

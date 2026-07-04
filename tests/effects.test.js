@@ -81,7 +81,7 @@ test('Effects: spawn populates, update(1s) clears, draw never throws', () => {
   fx.spawnFromEvent({ type: 'snap', x: 10, y: 20 });
   fx.spawnFromEvent({ type: 'rejected', x0: 0, y0: 0, x1: 300, y1: 0 });
   fx.spawnFromEvent({ type: 'bisect' }); // unknown-to-effects event: ignored
-  assert.ok(fx.sparks.length >= 14, 'jet burst (>=8) + debris (>=6) spawned');
+  assert.ok(fx.sparks.length >= 22, 'jet burst (>=8) + debris (>=14) spawned');
   assert.equal(fx.emitters.length, 1, 'deflate leaves a sustained-jet emitter');
   assert.equal(fx.scratches.length, 1);
   assert.equal(fx.labels.length, 1);
@@ -123,6 +123,32 @@ test('Effects: deflate emitter keeps feeding the jet, then dies inside its 0.5s 
   fx.update(1.0);
   assert.equal(fx.emitters.length, 0, 'emitter expired');
   assert.equal(fx.active, false, 'nothing survives the big catch-up step');
+});
+
+test('Effects: debris falls, bounces once on its seeded micro-facet, dies fast', () => {
+  const fx = new Effects();
+  fx.spawnFromEvent({ type: 'snap', x: 40, y: 80 });
+  const n = fx.sparks.length;
+  assert.ok(n >= 14 && n <= 18, `debris count 14-18, got ${n}`);
+  for (const p of fx.sparks) {
+    assert.equal(p.ay, 600, 'debris falls under 600 px/s^2');
+    assert.ok(p.floor >= 80 + 12 && p.floor <= 80 + 22, 'micro-facet 12-22px below spawn');
+    assert.ok(p.life <= 0.65 + 1e-9, 'debris lifetime <= 0.65s');
+  }
+  // Step fine-grained: nothing may ever sink below its own micro-facet.
+  for (let i = 0; i < 60; i++) {
+    fx.update(1 / 60);
+    for (const p of fx.sparks) {
+      assert.ok(Number.isFinite(p.x) && Number.isFinite(p.y));
+      assert.ok(p.y <= p.floor + 1e-6, `debris rests on its facet (y=${p.y}, floor=${p.floor})`);
+    }
+  }
+  assert.equal(fx.active, false, 'all debris dead within 1s');
+  // Determinism: the facet is seeded at spawn, never re-rolled per frame.
+  const fx2 = new Effects();
+  fx2.spawnFromEvent({ type: 'snap', x: 40, y: 80 });
+  fx2.update(0.5);
+  for (const p of fx2.sparks) assert.ok(p.floor >= 92 && p.floor <= 102);
 });
 
 test('Effects: whip after-images draw, fade and never survive 1s', () => {

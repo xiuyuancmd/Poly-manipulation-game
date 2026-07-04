@@ -74,6 +74,17 @@ button:hover { background: #2e3846; }
 #target-preview { width: 100%; background: #10141a; border-radius: 8px; border: 1px solid #232a35; }
 
 #gauge { position: relative; width: 110px; height: 110px; margin: 0 auto; }
+/* Target locked-in: a 0.6 s freeze-frame flash (steps(1) = discrete strobe,
+   like an instrument latching a reading), runs exactly once; the .locked
+   class is removed on animationend. */
+#gauge.locked { animation: gauge-lock 0.6s steps(1) 1; }
+@keyframes gauge-lock {
+  0% { filter: brightness(1.9); transform: scale(1.06); }
+  25% { filter: none; transform: none; }
+  50% { filter: brightness(1.9); transform: scale(1.06); }
+  75% { filter: none; transform: none; }
+  100% { filter: none; transform: none; }
+}
 #gauge svg { transform: rotate(-90deg); }
 .ring-bg { fill: none; stroke: #232a35; stroke-width: 7; }
 #ring-hold { fill: none; stroke: #e8c66a; stroke-width: 7; stroke-linecap: round; transition: stroke-dashoffset 0.1s linear; }

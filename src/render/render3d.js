@@ -93,7 +93,7 @@ for (let i = 0; i <= FACE_N; i++) {
   ]);
 }
 function faceWhiteStep(strain) {
-  const t = Math.min(1, Math.max(0, (strain - 1.03) / 0.22));
+  const t = Math.min(1, Math.max(0, (strain - 1.02) / 0.17));
   return Math.round(t * FACE_N);
 }
 
@@ -244,6 +244,9 @@ export function drawScene3D(ctx, session, view = {}) {
     ctx.arc(p.sx, p.sy, 6, 0, Math.PI * 2);
     ctx.fill();
   }
+
+  // Screen-space fracture sparks (top layer; zero cost when idle).
+  session.effects?.draw(ctx);
 }
 
 function line3(ctx, cam, basis, a, b) {

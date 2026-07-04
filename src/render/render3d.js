@@ -63,6 +63,59 @@ const cross = (a, b) => ({
 
 const LIGHT = norm({ x: 0.5, y: 0.8, z: 0.35 });
 
+// ---- material readouts (stress whitening) -----------------------------------
+// Per-body edge rest-length lookup, built once per body (WeakMap keyed — the
+// 3D mesh is never re-meshed, so the cache stays valid for the body's life).
+const EDGE_REST = new WeakMap();
+function edgeRestMap(body) {
+  let m = EDGE_REST.get(body);
+  if (!m) {
+    m = new Map();
+    for (const e of body.edgeCs) {
+      m.set(Math.min(e.a, e.b) * 100000 + Math.max(e.a, e.b), e.c.rest);
+    }
+    EDGE_REST.set(body, m);
+  }
+  return m;
+}
+
+// 24-step quantized whitening ramps — LOCAL copies (render2d's exports stay
+// untouched). Faces whiten from the matrix green; a face's strain is the mean
+// current/rest ratio of its three edges, whitening from +3% stretch.
+const FACE_N = 24;
+const FACE_WHITE = [];
+for (let i = 0; i <= FACE_N; i++) {
+  const f = i / FACE_N;
+  FACE_WHITE.push([
+    56 + (245 - 56) * f,
+    150 + (255 - 150) * f,
+    125 + (242 - 125) * f,
+  ]);
+}
+function faceWhiteStep(strain) {
+  const t = Math.min(1, Math.max(0, (strain - 1.03) / 0.22));
+  return Math.round(t * FACE_N);
+}
+
+// Pipe segments whiten from steel grey under real stretch (same visual
+// language as the 2D pipes); colour strings are cached per quantized step.
+function makeStrainRamp(base, white, s0, s1) {
+  const N = 24;
+  const cache = new Array(N + 1);
+  return (strain) => {
+    const t = Math.min(1, Math.max(0, (strain - s0) / (s1 - s0)));
+    const b = Math.round(t * N);
+    if (!cache[b]) {
+      const f = b / N;
+      cache[b] = `rgb(${Math.round(base[0] + (white[0] - base[0]) * f)},${
+        Math.round(base[1] + (white[1] - base[1]) * f)},${
+        Math.round(base[2] + (white[2] - base[2]) * f)})`;
+    }
+    return cache[b];
+  };
+}
+const pipeStrainColor3D = makeStrainRamp([170, 182, 198], [246, 250, 253], 1.02, 1.35);
+
 export function drawScene3D(ctx, session, view = {}) {
   const { canvas } = ctx;
   const cam = session.camera;
@@ -102,7 +155,16 @@ export function drawScene3D(ctx, session, view = {}) {
     ctx.restore();
   }
 
-  // Body triangles, painter's order, flat shaded.
+  // Body triangles, painter's order, flat shaded + per-face stress whitening
+  // (mean edge strain of the triangle, quantized — a pressed or stretched
+  // face pales exactly where the material actually carries the load).
+  const rests = edgeRestMap(body);
+  const eLen = (a, b) =>
+    Math.hypot(ps.x[b] - ps.x[a], ps.y[b] - ps.y[a], ps.z[b] - ps.z[a]);
+  const eStrain = (a, b) => {
+    const r = rests.get(Math.min(a, b) * 100000 + Math.max(a, b));
+    return r ? eLen(a, b) / r : 1;
+  };
   const tris = body.tris;
   const faces = [];
   for (let t = 0; t < tris.length; t += 3) {
@@ -115,7 +177,8 @@ export function drawScene3D(ctx, session, view = {}) {
     const vx = ps.x[c] - ps.x[a], vy = ps.y[c] - ps.y[a], vz = ps.z[c] - ps.z[a];
     const n = norm({ x: uy * vz - uz * vy, y: uz * vx - ux * vz, z: ux * vy - uy * vx });
     const shade = 0.45 + 0.55 * Math.max(0, n.x * LIGHT.x + n.y * LIGHT.y + n.z * LIGHT.z);
-    faces.push({ pa, pb, pc, depth: (pa.depth + pb.depth + pc.depth) / 3, shade });
+    const white = faceWhiteStep((eStrain(a, b) + eStrain(b, c) + eStrain(c, a)) / 3);
+    faces.push({ pa, pb, pc, depth: (pa.depth + pb.depth + pc.depth) / 3, shade, white });
   }
   faces.sort((u, v) => v.depth - u.depth);
   for (const f of faces) {
@@ -124,31 +187,45 @@ export function drawScene3D(ctx, session, view = {}) {
     ctx.lineTo(f.pb.sx, f.pb.sy);
     ctx.lineTo(f.pc.sx, f.pc.sy);
     ctx.closePath();
-    const g = Math.round(f.shade * 255);
-    ctx.fillStyle = `rgba(${Math.round(56 * f.shade)}, ${Math.round(150 * f.shade)}, ${Math.round(125 * f.shade)}, 0.94)`;
+    const [br, bg, bb] = FACE_WHITE[f.white];
+    ctx.fillStyle = `rgba(${Math.round(br * f.shade)}, ${Math.round(bg * f.shade)}, ${Math.round(bb * f.shade)}, 0.94)`;
     ctx.fill();
     ctx.strokeStyle = 'rgba(126,224,195,0.18)';
     ctx.lineWidth = 0.7;
     ctx.stroke();
   }
 
-  // Pipes (drawn over the body; the body is translucent enough to hint depth).
-  for (const chain of body.pipeChains()) {
-    ctx.strokeStyle = COLORS.pipe;
-    ctx.lineCap = 'round';
+  // Pipes: dark casing bore underlay + per-segment stress-whitened body —
+  // the same material language as the 2D pipes.
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.globalAlpha = 0.85;
+  for (const pipe of body.pipes) {
+    if (!pipe.alive) continue;
+    const proj = pipe.parts.map(i =>
+      ps.alive[i] ? cam.project(ps.x[i], ps.y[i], ps.z[i], basis) : null);
+    ctx.strokeStyle = 'rgba(15,22,27,0.55)';
+    ctx.lineWidth = 6.5;
     ctx.beginPath();
     let started = false;
-    for (const q of chain.points) {
-      const p = cam.project(q.x, q.y, q.z, basis);
+    for (const p of proj) {
       if (!p) { started = false; continue; }
       if (!started) { ctx.moveTo(p.sx, p.sy); started = true; }
       else ctx.lineTo(p.sx, p.sy);
     }
-    ctx.lineWidth = 4.5;
-    ctx.globalAlpha = 0.85;
     ctx.stroke();
-    ctx.globalAlpha = 1;
+    ctx.lineWidth = 4.5;
+    for (let k = 0; k < pipe.segCs.length; k++) {
+      const pa = proj[k], pb = proj[k + 1];
+      if (!pa || !pb) continue;
+      ctx.strokeStyle = pipeStrainColor3D(pipe.segCs[k].c.currentStrain(ps));
+      ctx.beginPath();
+      ctx.moveTo(pa.sx, pa.sy);
+      ctx.lineTo(pb.sx, pb.sy);
+      ctx.stroke();
+    }
   }
+  ctx.globalAlpha = 1;
 
   // Pins and grabs.
   for (const i of session.pins) {

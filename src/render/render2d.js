@@ -50,16 +50,16 @@ function makeStrainRamp(base, white, s0, s1) {
 // Pipes whiten visibly once stretched past rest (real stress readout).
 const pipeStrainColor = makeStrainRamp([170, 182, 198], [246, 250, 253], 1.02, 1.45);
 
-// Deflation desaturation: a body below rest pressure loses a little colour and
-// gloss. Four QUANTIZED tint steps (pressure >= 1.0 -> pristine, ~0.8 -> about
-// 8% desaturated/darker), all colours precomputed — no per-frame string churn.
+// Deflation desaturation: a body below rest pressure loses colour and gloss.
+// Four QUANTIZED tint steps (pressure >= 1.0 -> pristine, ~0.8 -> about 16%
+// desaturated/darker), all colours precomputed — no per-frame string churn.
 function dimmedRgb([r, g, b], f) {
   const gray = 0.2126 * r + 0.7152 * g + 0.0722 * b;
   const d = c => Math.round((c + (gray - c) * f) * (1 - f));
   return [d(r), d(g), d(b)];
 }
 const PRESSURE_TINTS = [0, 1, 2, 3].map(i => {
-  const f = (i / 3) * 0.08;
+  const f = (i / 3) * 0.16;
   const [fr, fg, fb] = dimmedRgb([56, 116, 98], f);
   return {
     fill: `rgba(${fr},${fg},${fb},0.60)`,
@@ -100,24 +100,63 @@ export function drawScene(ctx, session, view = {}) {
   view.effects?.draw(ctx);
 }
 
-/** Static workbench fixture around the specimen's rest pose: four corner
- *  clamp claws 14 px outside the rest bounding box plus a crosshair datum at
- *  the rest centroid. Steel grey, zero animation — pure bench dressing that
- *  also explains WHY the piece drifts back when released. */
+/** Static workbench fixture around the specimen's rest pose: a bench band the
+ *  piece sits on (with a soft contact shadow), four corner clamp BLOCKS —
+ *  double-line steel with gripper teeth on the inner faces — and a crosshair
+ *  datum at the rest centroid. Everything is a pure function of the rest
+ *  geometry: zero animation, and it explains WHY the released piece drifts
+ *  (and rotates) back into place. */
 function drawClampFrame(ctx, bbox, anchor) {
   const M = 14, L = 20;
   const x0 = bbox.minX - M, y0 = bbox.minY - M;
   const x1 = bbox.maxX + M, y1 = bbox.maxY + M;
   ctx.save();
-  ctx.strokeStyle = 'rgba(170,182,198,0.28)';
-  ctx.lineWidth = 3;
   ctx.lineCap = 'butt';
+  // Bench band just below the fixture: the rail the specimen is mounted on.
+  const bandY = bbox.maxY + M + 8;
+  ctx.strokeStyle = 'rgba(170,182,198,0.22)';
+  ctx.lineWidth = 5;
   ctx.beginPath();
-  ctx.moveTo(x0, y0 + L); ctx.lineTo(x0, y0); ctx.lineTo(x0 + L, y0);
-  ctx.moveTo(x1 - L, y0); ctx.lineTo(x1, y0); ctx.lineTo(x1, y0 + L);
-  ctx.moveTo(x1, y1 - L); ctx.lineTo(x1, y1); ctx.lineTo(x1 - L, y1);
-  ctx.moveTo(x0 + L, y1); ctx.lineTo(x0, y1); ctx.lineTo(x0, y1 - L);
+  ctx.moveTo(x0 - 24, bandY);
+  ctx.lineTo(x1 + 24, bandY);
   ctx.stroke();
+  // Static contact shadow between bench and specimen (under the body layer).
+  ctx.fillStyle = 'rgba(0,0,0,0.12)';
+  ctx.beginPath();
+  ctx.ellipse(anchor ? anchor.x : (x0 + x1) / 2, bandY - 3.5,
+    Math.max(20, (bbox.maxX - bbox.minX) * 0.35), 5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Corner clamp blocks: outer 3 px + inner 1 px contour, 2 gripper teeth
+  // per corner biting toward the specimen.
+  const corner = (cx, cy, ax, ay) => {
+    ctx.strokeStyle = 'rgba(170,182,198,0.28)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(cx + ax * L, cy);
+    ctx.lineTo(cx, cy);
+    ctx.lineTo(cx, cy + ay * L);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(200,212,226,0.30)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(cx + ax * L, cy + ay * 3);
+    ctx.lineTo(cx + ax * 3, cy + ay * 3);
+    ctx.lineTo(cx + ax * 3, cy + ay * L);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(170,182,198,0.28)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(cx + ax * 11, cy + ay * 3);
+    ctx.lineTo(cx + ax * 11, cy + ay * 7);
+    ctx.moveTo(cx + ax * 3, cy + ay * 11);
+    ctx.lineTo(cx + ax * 7, cy + ay * 11);
+    ctx.stroke();
+  };
+  corner(x0, y0, 1, 1);
+  corner(x1, y0, -1, 1);
+  corner(x1, y1, -1, -1);
+  corner(x0, y1, 1, -1);
+  ctx.strokeStyle = 'rgba(170,182,198,0.28)';
   if (anchor) {
     const r = 9, g = 3;
     ctx.lineWidth = 1;
@@ -203,7 +242,7 @@ function drawBody(ctx, session) {
   for (const island of rs.islands) {
     const inw = ringInwardSign(island.points);
     drawBoundary(ctx, island, inw, pressureTint(island.pressure).edgeRamp);
-    drawWetHighlight(ctx, island, inw);
+    drawWetHighlight(ctx, island, inw, island.pressure);
   }
 
   // 6 — grab dents (clipped to the body so the shading never spills out).
@@ -282,9 +321,18 @@ function drawWrinkles(ctx, a, b, k, s, inw) {
 }
 
 /** Thin bright line just inside boundary edges whose outward normal faces the
- *  fixed light — a wet sheen. Brightness grows slightly with edge strain. */
-function drawWetHighlight(ctx, island, inw) {
+ *  fixed light — a wet sheen. Brightness grows slightly with edge strain and
+ *  fades as the island deflates (a slack membrane loses its gloss): below
+ *  rest pressure the alpha is linearly cut down to x0.5 at p<=0.8.
+ *  Colour strings come from a quantized cache — zero per-frame churn. */
+const HIGHLIGHT_CACHE = [];
+function highlightColor(alpha) {
+  const q = Math.max(0, Math.min(60, Math.round(alpha * 100)));
+  return HIGHLIGHT_CACHE[q] ?? (HIGHLIGHT_CACHE[q] = `rgba(224,255,245,${(q / 100).toFixed(2)})`);
+}
+function drawWetHighlight(ctx, island, inw, pressure) {
   const pts = island.points, n = pts.length;
+  const gloss = pressure < 1 ? 1 - 0.5 * Math.min(1, (1 - pressure) / 0.2) : 1;
   ctx.lineCap = 'round';
   ctx.lineWidth = 1.4;
   for (let k = 0; k < n; k++) {
@@ -297,8 +345,8 @@ function drawWetHighlight(ctx, island, inw) {
     if (facing < 0.35) continue;
     const s = island.edgeStrains[k] ?? 1;
     const alpha = Math.min(0.6,
-      0.10 + (facing - 0.35) * 0.5 + Math.max(0, s - 1) * 1.5);
-    ctx.strokeStyle = `rgba(224,255,245,${alpha.toFixed(2)})`;
+      0.10 + (facing - 0.35) * 0.5 + Math.max(0, s - 1) * 1.5) * gloss;
+    ctx.strokeStyle = highlightColor(alpha);
     ctx.beginPath();
     ctx.moveTo(a.x + nx * 2.6, a.y + ny * 2.6);
     ctx.lineTo(b.x + nx * 2.6, b.y + ny * 2.6);

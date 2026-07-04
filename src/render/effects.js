@@ -27,10 +27,13 @@ export class Effects {
     this.sparks = [];    // {x,y,vx,vy,age,life,size,color,drag}
     this.scratches = []; // {x0,y0,x1,y1,age,life}
     this.labels = [];    // {x,y,text,age,life}
+    this.emitters = [];  // {x,y,base,rng,age,life,rate,carry} — sustained jets
+    this.whips = [];     // {pts:[{x,y}...],age,life} — cable recoil after-images
   }
 
   get active() {
-    return this.sparks.length > 0 || this.scratches.length > 0 || this.labels.length > 0;
+    return this.sparks.length > 0 || this.scratches.length > 0 || this.labels.length > 0
+      || this.emitters.length > 0 || this.whips.length > 0;
   }
 
   spawnFromEvent(e) {
@@ -49,22 +52,38 @@ export class Effects {
       ^ (Math.round(y * 1000) * 19349663);
   }
 
-  /** deflate: 12–18 pale air particles blasting out along `dir`, slowing down. */
+  /** deflate: an 8–10 particle first-frame burst along `dir`, then a 0.45 s
+   *  emitter keeps blowing ~150 particles/s (2–3 per frame) out of the cut —
+   *  a pressure loop does not empty in one frame. Everything is dead well
+   *  under a second after the emitter stops. */
   spawnJet(x, y, dirX, dirY) {
     const rng = makeRng(this.seed(x, y));
     const base = Math.atan2(dirY, dirX);
-    const n = 12 + Math.floor(rng() * 7);
-    for (let i = 0; i < n; i++) {
-      const ang = base + (rng() - 0.5) * 0.9; // tight cone
-      const sp = 130 + rng() * 160;
-      this.sparks.push({
-        x, y,
-        vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
-        age: 0, life: 0.35 + rng() * 0.35,
-        size: 1.2 + rng() * 1.6,
-        color: rng() < 0.5 ? 'rgb(224,246,255)' : 'rgb(255,255,255)',
-        drag: 2.6,
-      });
+    const burst = 8 + Math.floor(rng() * 3);
+    for (let i = 0; i < burst; i++) this.jetSpark(x, y, base, rng);
+    this.emitters.push({ x, y, base, rng, age: 0, life: 0.45, rate: 150, carry: 0 });
+  }
+
+  /** One escaping-air particle in a ±0.45 rad cone around `base`. */
+  jetSpark(x, y, base, rng) {
+    const ang = base + (rng() - 0.5) * 0.9;
+    const sp = 130 + rng() * 160; // 130–290 px/s
+    this.sparks.push({
+      x, y,
+      vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
+      age: 0, life: 0.3 + rng() * 0.35, // <= 0.65 s
+      size: 1.2 + rng() * 1.6,
+      color: rng() < 0.5 ? 'rgb(224,246,255)' : 'rgb(255,255,255)',
+      drag: 2.6,
+    });
+  }
+
+  /** Cable recoil after-image: fading, thinning snapshots of the severed
+   *  fragments' polylines (0.3 s one-shot; polylines are copied). */
+  spawnWhip(polylines) {
+    for (const pts of polylines ?? []) {
+      if (!pts || pts.length < 2) continue;
+      this.whips.push({ pts: pts.map(p => ({ x: p.x, y: p.y })), age: 0, life: 0.3 });
     }
   }
 
@@ -87,7 +106,7 @@ export class Effects {
   }
 
   /** rejected: white scuff along the blade direction (clamped to 40 px)
-   *  fading over 0.5 s, plus a 12 px caption fading over 0.9 s. */
+   *  fading over 0.5 s, plus a 14 px caption fading over 1.05 s. */
   spawnRejection(x0, y0, x1, y1) {
     const dx = x1 - x0, dy = y1 - y0;
     const len = Math.hypot(dx, dy) || 1;
@@ -98,11 +117,24 @@ export class Effects {
       y1: y0 + (dy / len) * l,
       age: 0, life: 0.5,
     });
-    this.labels.push({ x: x0 + 14, y: y0 - 14, text: '只能从外部下刀', age: 0, life: 0.9 });
+    this.labels.push({ x: x0 + 14, y: y0 - 14, text: '只能从外部下刀', age: 0, life: 1.05 });
   }
 
   update(dt) {
     if (!this.active) return;
+    // Emitters run BEFORE the ageing pass, so one large catch-up step also
+    // ages whatever it just emitted — no particle can outlive a big dt.
+    let we = 0;
+    for (const em of this.emitters) {
+      em.carry += Math.min(em.rate * dt, 8); // per-call cap
+      while (em.carry >= 1) {
+        em.carry -= 1;
+        this.jetSpark(em.x, em.y, em.base, em.rng);
+      }
+      em.age += dt;
+      if (em.age < em.life) this.emitters[we++] = em;
+    }
+    this.emitters.length = we;
     const sparks = this.sparks;
     let w = 0;
     for (const p of sparks) {
@@ -116,32 +148,53 @@ export class Effects {
     sparks.length = w;
     this.scratches = this.scratches.filter(s => (s.age += dt) < s.life);
     this.labels = this.labels.filter(s => (s.age += dt) < s.life);
+    this.whips = this.whips.filter(s => (s.age += dt) < s.life);
   }
 
   draw(ctx) {
     if (!this.active) return; // idle scene: zero cost, zero animation
     ctx.save();
+    ctx.lineCap = 'round';
+    // Sparks as short motion-trail segments (2 px), read as streaks not dots.
     for (const p of this.sparks) {
       ctx.globalAlpha = Math.max(0, (1 - p.age / p.life) * 0.85);
-      ctx.fillStyle = p.color;
+      ctx.strokeStyle = p.color;
+      ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.arc(p.x, p.y, p.size, 0, TAU);
-      ctx.fill();
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(p.x - p.vx * 0.035, p.y - p.vy * 0.035);
+      ctx.stroke();
     }
-    ctx.lineCap = 'round';
+    // Cable-recoil after-images: fading, thinning polyline snapshots.
+    for (const wp of this.whips) {
+      const f = Math.max(0, 1 - wp.age / wp.life);
+      ctx.globalAlpha = f * 0.55;
+      ctx.strokeStyle = 'rgb(226,234,245)';
+      ctx.lineWidth = 1 + 2 * f; // 3 -> 1
+      ctx.beginPath();
+      wp.pts.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+      ctx.stroke();
+    }
     for (const s of this.scratches) {
-      ctx.globalAlpha = Math.max(0, (1 - s.age / s.life) * 0.8);
+      // Blade-skid shiver: a deterministic, decaying sine offset (±2 px,
+      // pure function of age — no RNG, dead in 0.5 s with the scratch).
+      const f = 1 - s.age / s.life;
+      const dx = s.x1 - s.x0, dy = s.y1 - s.y0;
+      const len = Math.hypot(dx, dy) || 1;
+      const off = 2 * f * Math.sin(s.age * 45);
+      const ox = (-dy / len) * off, oy = (dx / len) * off;
+      ctx.globalAlpha = Math.max(0, f * 0.8);
       ctx.strokeStyle = 'rgb(255,255,255)';
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.moveTo(s.x0, s.y0);
-      ctx.lineTo(s.x1, s.y1);
+      ctx.moveTo(s.x0 + ox, s.y0 + oy);
+      ctx.lineTo(s.x1 + ox, s.y1 + oy);
       ctx.stroke();
     }
     for (const l of this.labels) {
       ctx.globalAlpha = Math.max(0, Math.min(1, (1 - l.age / l.life) * 1.4));
       ctx.fillStyle = 'rgb(255,236,230)';
-      ctx.font = '12px system-ui, sans-serif';
+      ctx.font = '14px system-ui, sans-serif';
       ctx.fillText(l.text, l.x, l.y);
     }
     ctx.restore();

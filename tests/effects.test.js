@@ -81,7 +81,8 @@ test('Effects: spawn populates, update(1s) clears, draw never throws', () => {
   fx.spawnFromEvent({ type: 'snap', x: 10, y: 20 });
   fx.spawnFromEvent({ type: 'rejected', x0: 0, y0: 0, x1: 300, y1: 0 });
   fx.spawnFromEvent({ type: 'bisect' }); // unknown-to-effects event: ignored
-  assert.ok(fx.sparks.length >= 18, 'jet (>=12) + debris (>=6) spawned');
+  assert.ok(fx.sparks.length >= 14, 'jet burst (>=8) + debris (>=6) spawned');
+  assert.equal(fx.emitters.length, 1, 'deflate leaves a sustained-jet emitter');
   assert.equal(fx.scratches.length, 1);
   assert.equal(fx.labels.length, 1);
   const scr = fx.scratches[0];
@@ -109,4 +110,31 @@ test('Effects: particles carry finite positions while alive', () => {
       assert.ok(Number.isFinite(p.x) && Number.isFinite(p.y));
     }
   }
+});
+
+test('Effects: deflate emitter keeps feeding the jet, then dies inside its 0.5s budget', () => {
+  const fx = new Effects();
+  fx.spawnFromEvent({ type: 'deflate', x: 0, y: 0, dirX: 1, dirY: 0 });
+  const burst = fx.sparks.length;
+  assert.ok(burst >= 8 && burst <= 10, `first-frame burst 8-10, got ${burst}`);
+  fx.update(0.1);
+  assert.ok(fx.sparks.length > burst, 'emitter added particles after the burst');
+  assert.equal(fx.emitters.length, 1, 'emitter still alive at 0.1s');
+  fx.update(1.0);
+  assert.equal(fx.emitters.length, 0, 'emitter expired');
+  assert.equal(fx.active, false, 'nothing survives the big catch-up step');
+});
+
+test('Effects: whip after-images draw, fade and never survive 1s', () => {
+  const fx = new Effects();
+  fx.spawnWhip([[{ x: 0, y: 0 }, { x: 10, y: 5 }], [{ x: 20, y: 0 }, { x: 30, y: 5 }]]);
+  assert.equal(fx.whips.length, 2);
+  assert.ok(fx.active);
+  const ctx = stubCtx();
+  fx.draw(ctx);
+  assert.ok(ctx.calls.length > 0, 'whips render');
+  fx.update(0.1);
+  assert.ok(fx.active, 'still fading at 0.1s');
+  fx.update(1.0);
+  assert.equal(fx.active, false, 'after-images cleared');
 });

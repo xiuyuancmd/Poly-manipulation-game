@@ -8,6 +8,7 @@ import { TargetSpec, evaluate } from '../src/engine/similarity2d.js';
 import { signedArea, pointInPolygon } from '../src/engine/geom.js';
 import { ParticleSystem, Solver } from '../src/engine/xpbd.js';
 import { SoftBody2D } from '../src/engine/softbody2d.js';
+import { Session2D } from '../src/game/session2d.js';
 
 const area = poly => Math.abs(signedArea(poly));
 
@@ -76,13 +77,12 @@ for (const level of levels.filter(l => l.dim !== 3)) {
   });
 
   test(`${level.id}: settled pressure loops stay inside the body (<=3px tolerance)`, () => {
-    // Rest-state containment audit: after settling, every particle of a live
-    // PRESSURE loop must sit inside an alive island — an inflated ring must
-    // never poke through the specimen's edge (it reads as a rendering bug).
-    // Scoped to pressure pipes: L3's cables (12.9px) and L4's brittle strut
-    // (10.3px) protrude at rest for pre-existing authoring reasons and their
-    // paths are outside this round's allowed changes — see the iteration-3
-    // changelog.
+    // ENGINE-layer rest-state containment audit: after settling, every
+    // particle of a live PRESSURE loop must sit inside an alive island — an
+    // inflated ring must never poke through the specimen's edge (it reads as
+    // a rendering bug). Kept scoped to pressure pipes: the raw engine has no
+    // cable-guide grooves; full-material containment is the SESSION-layer
+    // audit below.
     const body = settledBody(level);
     const islands = body.aliveIslands().map(i => body.ringPoints(i));
     for (const pipe of body.pipes) {
@@ -93,6 +93,28 @@ for (const level of levels.filter(l => l.dim !== 3)) {
         const d = Math.min(...islands.map(poly => distToPoly(poly, x, y)));
         assert.ok(d <= 3,
           `pressure loop particle (${x.toFixed(1)},${y.toFixed(1)}) sticks out ${d.toFixed(1)}px`);
+      }
+    }
+  });
+
+  test(`${level.id}: session-layer rest state contains ALL pipe materials (<=1px)`, () => {
+    // SESSION-layer containment audit: the game session adds cable-guide
+    // grooves (containPipes) on top of the raw engine, so after 1.5 s of
+    // undisturbed play EVERY live pipe particle of EVERY material must sit
+    // inside an alive island (1 px boundary tolerance).
+    const session = new Session2D(level);
+    for (let f = 0; f < 90; f++) session.step(1 / 60);
+    const { ps, body } = session;
+    const islands = body.aliveIslands().map(i => body.ringPoints(i));
+    for (const pipe of body.pipes) {
+      if (!pipe.alive) continue;
+      for (const p of pipe.parts) {
+        if (!ps.alive[p]) continue;
+        const x = ps.x[p], y = ps.y[p];
+        if (islands.some(poly => pointInPolygon(poly, x, y))) continue;
+        const d = Math.min(...islands.map(poly => distToPoly(poly, x, y)));
+        assert.ok(d <= 1,
+          `${pipe.type} particle (${x.toFixed(1)},${y.toFixed(1)}) sticks out ${d.toFixed(1)}px at rest`);
       }
     }
   });

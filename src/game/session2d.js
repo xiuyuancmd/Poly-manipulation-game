@@ -7,6 +7,7 @@ import { SoftBody2D } from '../engine/softbody2d.js';
 import { performCut } from '../engine/cut2d.js';
 import { selectStretch, weldStretches } from '../engine/glue2d.js';
 import { TargetSpec, evaluate, inverseTransform } from '../engine/similarity2d.js';
+import { pointInPolygon } from '../engine/geom.js';
 import { drawScene } from '../render/render2d.js';
 import { Effects } from '../render/effects.js';
 
@@ -54,6 +55,12 @@ export class Session2D {
     this.effects = new Effects();
     this.grabs = new Map();   // pointerId -> {anchor, particle}
     this.pins = new Set();    // particle indices
+    // Cable-guide groove state (containPipes): seated particles and
+    // per-particle exemption deadlines (cable recoil must whip freely
+    // before the groove re-seats it).
+    this.seated = new Set();
+    this.freeUntil = new Map();
+    this.t = 0;
     this.cutDrag = null;      // {x0,y0,x1,y1}
     this.glueSel = null;
     this.gluePos = null;
@@ -113,6 +120,7 @@ export class Session2D {
   controlCount() { return this.grabs.size + this.pins.size; }
 
   step(dt) {
+    this.t += dt;
     // Fixed timestep with an accumulator; cap catch-up to avoid death spirals.
     this.accumulator = Math.min(this.accumulator + dt, 3 / 60);
     while (this.accumulator >= 1 / 60 - 1e-9) {
@@ -148,7 +156,10 @@ export class Session2D {
         const dx = this.anchor.x - m.cx, dy = this.anchor.y - m.cy;
         const d = Math.hypot(dx, dy);
         if (d > 0.5) {
-          const s = Math.min(d, 90 * dt) / d;
+          // Adaptive glide: 90 px/s near home (unchanged feel), proportional
+          // boost far away so a violently flung specimen returns within ~4 s
+          // instead of drifting for half a minute. Clamp to d: no overshoot.
+          const s = Math.min(d, Math.max(90, 0.9 * d) * dt) / d;
           const mx = dx * s, my = dy * s;
           const { ps } = this;
           for (const i of this.body.owned) {
@@ -157,6 +168,72 @@ export class Session2D {
             ps.px[i] += mx; ps.py[i] += my;
           }
         }
+      }
+    }
+    this.containPipes();
+  }
+
+  /** Cable-guide grooves ("导缆槽") of the casting fixture: a pipe particle
+   *  that has come to REST just outside the specimen wall is seated back to
+   *  2 px inside the nearest island boundary. Session-layer containment only —
+   *  no engine change. Gates:
+   *    - INITIAL seating requires speed < 30 px/s — a recoiling cable tip
+   *      (~220 px/s) whips freely — and freshly severed fragments carry a
+   *      1.2 s exemption window on top (set by cableRecoil);
+   *    - protrusion <= 24 px — a fragment flung far away is NOT teleported
+   *      across the bench (beyond that the seat releases entirely);
+   *    - no live grabs — never fights the player's hand.
+   *  Once seated the groove is STICKY: a taut bowstring cable yanks the
+   *  particle back out with 100+ px/s every frame (measured on L3), so a
+   *  plain speed gate would stall into a visible in/out shimmer. A seated
+   *  particle is re-seated regardless of speed and its OUTWARD velocity
+   *  component is cancelled — a one-sided groove-wall contact, purely
+   *  dissipative — and the seat releases only once the particle sits >4 px
+   *  INSIDE on its own (the yank is genuinely gone; a 0.5 s timer release
+   *  was tried first and breathed in/out at ~1 s period). The seat moves
+   *  x/y and px/py together, so it adds no velocity of its own. */
+  containPipes() {
+    if (this.grabs.size > 0) return;
+    const { ps } = this;
+    const islands = this.body.aliveIslands().map(i => this.body.ringPoints(i));
+    if (islands.length === 0) return;
+    for (const pipe of this.body.pipes) {
+      if (!pipe.alive) continue;
+      for (const p of pipe.parts) {
+        if (!ps.alive[p]) continue;
+        if ((this.freeUntil.get(p) ?? 0) > this.t) { this.seated.delete(p); continue; }
+        const seated = this.seated.has(p);
+        const x = ps.x[p], y = ps.y[p];
+        const inside = islands.some(poly => pointInPolygon(poly, x, y));
+        if (inside && !seated) continue;
+        if (!inside && !seated && Math.hypot(ps.vx[p], ps.vy[p]) >= 30) continue;
+        // Nearest point on any island boundary.
+        let bx = 0, by = 0, bd = Infinity;
+        for (const poly of islands) {
+          for (let i = 0, n = poly.length; i < n; i++) {
+            const a = poly[i], b = poly[(i + 1) % n];
+            const ex = b.x - a.x, ey = b.y - a.y;
+            const L2 = ex * ex + ey * ey;
+            const t = L2 > 0 ? Math.max(0, Math.min(1, ((x - a.x) * ex + (y - a.y) * ey) / L2)) : 0;
+            const qx = a.x + ex * t, qy = a.y + ey * t;
+            const d = Math.hypot(x - qx, y - qy);
+            if (d < bd) { bd = d; bx = qx; by = qy; }
+          }
+        }
+        if (inside) {
+          if (bd > 4) this.seated.delete(p); // holds deep inside on its own
+          continue;
+        }
+        if (bd > 24 || bd < 1e-6) { this.seated.delete(p); continue; }
+        // Seat 2 px INSIDE along the outward->inward direction and cancel the
+        // outward velocity component (one-sided contact, dissipative).
+        const nx = (bx - x) / bd, ny = (by - y) / bd; // inward unit
+        const mx = bx + nx * 2 - x, my = by + ny * 2 - y;
+        ps.x[p] += mx; ps.y[p] += my;
+        ps.px[p] += mx; ps.py[p] += my;
+        const vOut = -(ps.vx[p] * nx + ps.vy[p] * ny); // outward speed
+        if (vOut > 0) { ps.vx[p] += vOut * nx; ps.vy[p] += vOut * ny; }
+        this.seated.add(p);
       }
     }
   }
@@ -411,6 +488,12 @@ export class Session2D {
     const snapshots = [];
     for (const { pipe, fromStart } of frags.slice(0, 2)) {
       const parts = pipe.parts;
+      // The whole fragment whips: exempt it from the cable-guide groove for
+      // 1.2 s (and unseat it), or the containment would clamp the recoil dead.
+      for (const q of parts) {
+        this.seated.delete(q);
+        this.freeUntil.set(q, this.t + 1.2);
+      }
       const tipN = Math.min(4, parts.length);
       for (let k = 0; k < tipN; k++) {
         // k = 0 is the freed tip; recoil points AWAY from the cut, along the

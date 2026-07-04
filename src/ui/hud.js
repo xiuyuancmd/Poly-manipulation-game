@@ -4,9 +4,13 @@
 
 import { drawTargetPreview } from '../render/render2d.js';
 import { drawTargetPreview3D } from '../render/render3d.js';
+import { dialFrac } from './dial.js';
 
 const RING_R = 40;
 const RING_C = 2 * Math.PI * RING_R;
+// Outer score arc: the live similarity needle, wrapped around the hold ring.
+const SCORE_R = 47;
+const SCORE_C = 2 * Math.PI * SCORE_R;
 
 export class HUD {
   constructor(root, cb) {
@@ -29,6 +33,9 @@ export class HUD {
               <circle class="ring-bg" cx="55" cy="55" r="${RING_R}"></circle>
               <circle id="ring-hold" cx="55" cy="55" r="${RING_R}"
                 stroke-dasharray="${RING_C.toFixed(1)}" stroke-dashoffset="${RING_C.toFixed(1)}"></circle>
+              <circle id="ring-score" cx="55" cy="55" r="${SCORE_R}"
+                stroke-dasharray="${SCORE_C.toFixed(1)}" stroke-dashoffset="${SCORE_C.toFixed(1)}"></circle>
+              <line id="ring-tick" x1="98" y1="55" x2="106" y2="55"></line>
             </svg>
             <div id="score-num">0</div>
           </div>
@@ -72,6 +79,7 @@ export class HUD {
       targetName: this.$('#target-name'), preview: this.$('#target-preview'),
       gauge: this.$('#gauge'),
       scoreNum: this.$('#score-num'), ringHold: this.$('#ring-hold'),
+      ringScore: this.$('#ring-score'), ringTick: this.$('#ring-tick'),
       barOutline: this.$('#bar-outline'), barPipes: this.$('#bar-pipes'),
       cutoffLabel: this.$('#cutoff-label'), topoWarn: this.$('#topo-warn'), hint: this.$('#hint-text'),
       controlsChip: this.$('#controls-chip'), toast: this.$('#toast'), banner: this.$('#banner'),
@@ -141,14 +149,25 @@ export class HUD {
     this.els.progress.textContent = `目标 ${index + 1}/${total}`;
     this.els.targetName.textContent = spec.name ? `「${spec.name}」` : '';
     this.els.cutoffLabel.textContent = `达标线 ${cutoff} · 保持 3 秒`;
+    // Cutoff tick on the score dial: same dialFrac mapping as the arc, so the
+    // arc tip crosses the tick on exactly the frame the score crosses cutoff.
+    this.els.ringTick.setAttribute('transform',
+      `rotate(${(360 * dialFrac(cutoff)).toFixed(2)} 55 55)`);
     if (spec.is3D) drawTargetPreview3D(this.els.preview, spec);
     else drawTargetPreview(this.els.preview, spec);
   }
 
   setScore(sim, cutoff, holdFrac) {
-    const total = Math.round(sim?.total ?? 0);
-    this.els.scoreNum.textContent = total;
-    this.els.scoreNum.classList.toggle('passing', total >= cutoff);
+    // The number is the raw instrument reading (one decimal, no dial mapping);
+    // pass/fail compares the unrounded value so text and hold logic agree.
+    const total = sim?.total ?? 0;
+    this.els.scoreNum.textContent = total.toFixed(1);
+    const passing = total >= cutoff;
+    this.els.scoreNum.classList.toggle('passing', passing);
+    // The arc is the same reading through the dial gamma (visual scale only).
+    this.els.ringScore.style.strokeDashoffset =
+      ((1 - dialFrac(total)) * SCORE_C).toFixed(2);
+    this.els.ringScore.classList.toggle('passing', passing);
     this.els.barOutline.style.width = `${Math.round(sim?.outline ?? 0)}%`;
     this.els.barPipes.style.width = `${Math.round(sim?.pipes ?? 0)}%`;
     this.els.ringHold.style.strokeDashoffset = ((1 - Math.min(1, holdFrac)) * RING_C).toFixed(1);

@@ -87,10 +87,11 @@ export class Effects {
     }
   }
 
-  /** snap: 14–18 dark shards scattering from the break point, falling under
-   *  gravity onto a per-particle virtual micro-facet 12–22 px below the spawn
-   *  (seeded); ONE damped bounce there, the second contact snuffs the shard.
-   *  Everything dead within 0.65 s. */
+  /** snap: 14–18 bright shards scattering from the break point — fresh
+   *  fracture faces catch the light, so they read pale grey-white / faint
+   *  cyan against the dark bench, falling under gravity onto a per-particle
+   *  virtual micro-facet 12–22 px below the spawn (seeded); ONE damped bounce
+   *  there, the second contact snuffs the shard. Dead within 0.65 s. */
   spawnDebris(x, y) {
     const rng = makeRng(this.seed(x, y));
     const n = 14 + Math.floor(rng() * 5);
@@ -102,7 +103,8 @@ export class Effects {
         vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
         age: 0, life: 0.35 + rng() * 0.3,
         size: 1.4 + rng() * 1.8,
-        color: 'rgb(30,41,38)',
+        color: rng() < 0.5 ? 'rgb(226,234,236)' : 'rgb(188,226,222)',
+        w: 1.4 + rng() * 1.8, // seeded stroke width, 1.4–3.2 px
         drag: 1.6,
         ay: 600,
         floor: y + 12 + rng() * 10,
@@ -111,10 +113,10 @@ export class Effects {
     }
   }
 
-  /** Fracture sparks (3D pipe snip): 6–8 bright blue-white 2 px streaks. */
+  /** Fracture sparks (pipe snip): 10–12 bright blue-white 3 px streaks. */
   spawnSparks(x, y) {
     const rng = makeRng(this.seed(x, y));
-    const n = 6 + Math.floor(rng() * 3);
+    const n = 10 + Math.floor(rng() * 3);
     for (let i = 0; i < n; i++) {
       const ang = rng() * TAU;
       const sp = 120 + rng() * 140;
@@ -124,6 +126,7 @@ export class Effects {
         age: 0, life: 0.25 + rng() * 0.2,
         size: 2,
         color: rng() < 0.5 ? 'rgb(214,238,255)' : 'rgb(255,255,255)',
+        w: 3,
         drag: 3.2,
       });
     }
@@ -188,11 +191,13 @@ export class Effects {
     if (!this.active) return; // idle scene: zero cost, zero animation
     ctx.save();
     ctx.lineCap = 'round';
-    // Sparks as short motion-trail segments (2 px), read as streaks not dots.
+    // Sparks as short motion-trail segments, read as streaks not dots.
+    // Per-particle stroke width when seeded at spawn; 2 px otherwise (the
+    // pressure-jet particles carry no `w` and keep their reference look).
     for (const p of this.sparks) {
       ctx.globalAlpha = Math.max(0, (1 - p.age / p.life) * 0.85);
       ctx.strokeStyle = p.color;
-      ctx.lineWidth = 2;
+      ctx.lineWidth = p.w ?? 2;
       ctx.beginPath();
       ctx.moveTo(p.x, p.y);
       ctx.lineTo(p.x - p.vx * 0.035, p.y - p.vy * 0.035);
@@ -202,9 +207,9 @@ export class Effects {
     // bright cyan-white (reads against the matrix green even at speed).
     for (const wp of this.whips) {
       const f = Math.max(0, 1 - wp.age / wp.life);
-      ctx.globalAlpha = f * 0.8;
+      ctx.globalAlpha = f * 0.9;
       ctx.strokeStyle = 'rgb(200,255,240)';
-      ctx.lineWidth = 1 + 3 * f; // 4 -> 1
+      ctx.lineWidth = 1 + 4 * f; // 5 -> 1
       ctx.beginPath();
       wp.pts.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
       ctx.stroke();

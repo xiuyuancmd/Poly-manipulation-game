@@ -88,10 +88,15 @@ button:hover { background: #2e3846; }
 #gauge svg { transform: rotate(-90deg); }
 .ring-bg { fill: none; stroke: #232a35; stroke-width: 7; }
 #ring-hold { fill: none; stroke: #e8c66a; stroke-width: 7; stroke-linecap: round; transition: stroke-dashoffset 0.1s linear; }
+/* Outer dial arc: live similarity through the gamma mapping; the tick marks
+   the cutoff on the same mapping, so arc-past-tick == score-past-cutoff. */
+#ring-score { fill: none; stroke: #5aa0e8; stroke-width: 4; stroke-linecap: round; transition: stroke-dashoffset 0.1s linear; }
+#ring-score.passing { stroke: #7ee0c3; }
+#ring-tick { stroke: #e8c66a; stroke-width: 2; }
 #score-num {
   position: absolute; inset: 0;
   display: grid; place-items: center;
-  font-size: 34px; font-weight: 800;
+  font-size: 26px; font-weight: 800;
   font-variant-numeric: tabular-nums;
 }
 #score-num.passing { color: #7ee0c3; }

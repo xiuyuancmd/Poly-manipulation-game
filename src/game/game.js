@@ -164,7 +164,7 @@ export class Game {
             // pipe layout agree with the spec — say so once per target.
             if (this._topoWasBad && this.sim.topologyOk === true && !this._topoFixedShown) {
               this._topoFixedShown = true;
-              this.hud.toast('管路结构对上了——照着虚线框继续塑形');
+              this.hud.toast('管路结构对上了——照着虚线框继续塑形，读数会跟着爬升');
             }
             this._topoWasBad = false;
             this.topoBadT = 0;

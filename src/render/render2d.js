@@ -82,23 +82,34 @@ function makeStrainRamp(base, white, s0, s1) {
 /** Quantized activation -> muscle colour ramp (bio contractile pipes only; lab
  *  pipes report activation === null and never reach here). a→1 (contracted)
  *  reads red-hot and bright; a→0 (relaxed / denervated) fades pale and limp.
- *  Endpoints derive from the live pipe base colour so it tracks the palette. */
+ *  Endpoints derive from the live pipe base colour so it tracks the palette.
+ *
+ *  A stretched L3 fibre never leaves the force-length floor, so its activation
+ *  lives entirely inside a narrow a∈[0.1,0.5] operational band. A linear 16-step
+ *  ramp put "held taut" (a≈0.35) and "contracting" (a≈0.4) in the SAME colour
+ *  bucket — the muscle looked static pink. So (iter-3): finer 32-step quantum
+ *  + a concave t=a^0.6 gamma that spreads that low band across a wide colour
+ *  travel, plus a paler limp end and a deeper-red hot end, so "slack vs pulling"
+ *  reads at a glance. Fully-relaxed/denervated (a→0) still fades to pale grey. */
 function makeActivationRamp(base) {
-  const N = 16;
+  const N = 32;
   const cache = new Array(N + 1);
-  // Limp end: desaturated toward a pale flesh-grey. Hot end: reddened + brighter.
+  // Limp end: paler, more desaturated flesh-grey (relaxed muscle loses tone).
   const slack = [
-    Math.round(base[0] * 0.5 + 212 * 0.5),
-    Math.round(base[1] * 0.45 + 200 * 0.55),
-    Math.round(base[2] * 0.45 + 198 * 0.55),
+    Math.round(base[0] * 0.42 + 216 * 0.58),
+    Math.round(base[1] * 0.38 + 206 * 0.62),
+    Math.round(base[2] * 0.38 + 204 * 0.62),
   ];
+  // Hot end: reddened, brighter, deeper saturation (blood rush on contraction).
   const hot = [
-    Math.min(255, Math.round(base[0] + 54)),
-    Math.round(base[1] * 0.62),
-    Math.round(base[2] * 0.66),
+    Math.min(255, Math.round(base[0] + 60)),
+    Math.round(base[1] * 0.48),
+    Math.round(base[2] * 0.52),
   ];
   return (a) => {
-    const t = Math.min(1, Math.max(0, a));
+    // Concave gamma lifts the low operational band toward the hot half so a
+    // small activation change swings a visible amount of colour.
+    const t = Math.pow(Math.min(1, Math.max(0, a)), 0.6);
     const b = Math.round(t * N);
     if (!cache[b]) {
       const f = b / N;

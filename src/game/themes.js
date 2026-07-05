@@ -254,11 +254,14 @@ export const THEMES = {
         },
         // 按管型覆盖 PIPE_STYLES。收缩肌束（contractile）挂主动收缩动态：
         //  riseK 2.0/s  强直上升 τ≈0.5s（探针：恒拉后 a 以 ~2/s 逼近目标）；
-        //  flK 1.2/flMin 0.35  力-长度：拉到 s≈1.8 稳态 a≈0.35（过拉发不出力）；
-        //  softK 1.5  活性软化：失神经(a→0)后柔度×(1+1.5)=2.5，肌腱瘫软；
-        //  slack 由 addPipe 用 1/restFactor 现算注入（contractile 0.58 → ≈1.724）。
+        //  flK 1.2/flMin 0.12  力-长度：拉到 s≈1.8 稳态 a≈0.12（第 3 轮：地板 0.35→0.12，
+        //    拉大动态范围——过牵时更"松劲"，拉平前后活性差 0.05→0.15、更易绷平，
+        //    solve-bio L3-1 94.1→94.7；受既有测试②约束 flMin≤0.4）；
+        //  softK 2.5  活性软化：失神经/过牵(a→0)后柔度×(1+2.5)=3.5，肌腱更瘫软、
+        //    "被拉住 vs 收缩中"力差更大（第 3 轮：1.5→2.5）；
+        //  slack 由 addPipe 用 1/restFactor 现算注入（L3 关卡覆盖 restFactor 0.55 → ≈1.818）。
         // lab 无此键 => 引擎 _act=null、actSoftK=0，逐位不变。
-        pipeStyles: { contractile: { active: { riseK: 2.0, flK: 1.2, flMin: 0.35, softK: 1.5 } } },
+        pipeStyles: { contractile: { active: { riseK: 2.0, flK: 1.2, flMin: 0.12, softK: 2.5 } } },
         // 搏动性失血：切断承压环后，失压目标随心搏分 4 跳阶梯下调。
         bleed: { pulses: 4 },
       },

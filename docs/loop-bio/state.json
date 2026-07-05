@@ -1,9 +1,9 @@
 {
-  "status": "running",
+  "status": "done",
   "startedAt": "2026-07-04T22:05:00Z",
   "deadline": "2026-07-05T02:05:00Z",
   "iteration": 3,
-  "phase": "generator",
+  "phase": "finished",
   "rubricHistory": [
     {
       "iteration": 1,
@@ -20,7 +20,12 @@
       "血管行为": 8.5,
       "肌肉行为": 5.5,
       "可玩性无回归": 8.5
+    },
+    {
+      "iteration": 3,
+      "说明": "冲刺轮（无终评）：肌肉活性摆幅×3、染色对比 0→20 RGB、solve-bio L3-1 94.68；『松手自动折弯』证伪不可行（关卡 compliance 禁改）"
     }
   ],
-  "notes": "第 3 轮为冲刺轮：肌肉动态范围（活性摆幅/收缩可见性），Generator 探针自调参。"
+  "notes": "第 3 轮为冲刺轮：肌肉动态范围（活性摆幅/收缩可见性），Generator 探针自调参。",
+  "finishedAt": "2026-07-05T00:40:00Z"
 }

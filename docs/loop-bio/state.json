@@ -2,8 +2,8 @@
   "status": "running",
   "startedAt": "2026-07-04T22:05:00Z",
   "deadline": "2026-07-05T02:05:00Z",
-  "iteration": 2,
-  "phase": "evaluator",
+  "iteration": 3,
+  "phase": "generator",
   "rubricHistory": [
     {
       "iteration": 1,
@@ -12,7 +12,15 @@
       "血管行为": 8.5,
       "肌肉行为": 3.0,
       "可玩性无回归": 8.5
+    },
+    {
+      "iteration": 2,
+      "组织拉扯真实感": 7.5,
+      "阻尼与定形": 7.5,
+      "血管行为": 8.5,
+      "肌肉行为": 5.5,
+      "可玩性无回归": 8.5
     }
   ],
-  "notes": "第二期：生物版物理真实感。材质档案架构，lab 逐位不变。"
+  "notes": "第 3 轮为冲刺轮：肌肉动态范围（活性摆幅/收缩可见性），Generator 探针自调参。"
 }
